@@ -6,7 +6,7 @@ import com.arbbot.market.Tick;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class RiskFilter {
+public final class RiskFilter {
 
     private static final Logger log = LoggerFactory.getLogger(RiskFilter.class);
 

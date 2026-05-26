@@ -25,7 +25,7 @@ class ScannerStaleDataTest {
         manager.getOrCreateBook("bybit", "BTCUSDT")
             .applySnapshot(Map.of(50200.0, 10.0), Map.of(50201.0, 10.0), 1L);
 
-        Thread.sleep(10);
+        Thread.sleep(100);
 
         var registry = new SymbolRegistry();
         registry.setWatchedSymbols(List.of("BTC"));

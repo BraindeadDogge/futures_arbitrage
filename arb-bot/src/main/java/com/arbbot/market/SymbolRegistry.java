@@ -121,7 +121,7 @@ public class SymbolRegistry {
         return Map.copyOf(symbolMap.getOrDefault(canonical, Map.of()));
     }
 
-    // package-private for testing (public to allow cross-package test access)
+    // visible for testing across packages
     public void loadExchangeSymbolDirectly(String exchange, String canonical, String exchangeSymbol) {
         symbolMap.computeIfAbsent(canonical, k -> new ConcurrentHashMap<>()).put(exchange, exchangeSymbol);
     }

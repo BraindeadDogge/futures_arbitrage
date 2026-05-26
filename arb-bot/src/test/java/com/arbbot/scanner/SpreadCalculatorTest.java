@@ -51,7 +51,7 @@ class SpreadCalculatorTest {
     }
 
     @Test
-    void zeroEffectivePriceReturnsNaN() {
+    void zeroEffectivePriceReturnsNonFinite() {
         var buyTick = new Tick("BTC", "binance", 0, 0, 0, 0, Instant.now(), false);
         var sellTick = new Tick("BTC", "bybit", 50100, 50101, 50101, 50100, Instant.now(), true);
 
