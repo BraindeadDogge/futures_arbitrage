@@ -30,9 +30,9 @@ class DepthAdjustedPriceTest {
             1L);
 
         // Buy $1000: takes all of level 50001 ($500.01) + rest from 50002
+        // qty2 = (1000 - 50001*0.01) / 50002 = 499.99/50002; totalQty = 0.01 + qty2; VWAP ≈ 50001.4998
         double price = book.effectiveBuyPrice(1000.0).orElseThrow();
-        assertTrue(price > 50001.0 && price < 50003.0,
-            "Expected price between 50001 and 50003, got " + price);
+        assertEquals(50001.4998, price, 0.01);
     }
 
     @Test

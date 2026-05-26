@@ -42,7 +42,8 @@ public class OrderBook {
      * Returns false if a sequence gap is detected (caller must trigger re-sync).
      * Pass seqNum=-1 to skip sequence validation (Binance U/u range is checked externally).
      */
-    public boolean applyDelta(List<PriceLevel> bidDeltas, List<PriceLevel> askDeltas, long seqNum) {
+    public synchronized boolean applyDelta(List<PriceLevel> bidDeltas, List<PriceLevel> askDeltas, long seqNum) {
+        if (!initialized) return false;
         if (seqNum != -1 && lastSeqNum.get() != -1) {
             long expected = lastSeqNum.get() + 1;
             if (seqNum != expected) {
@@ -59,7 +60,7 @@ public class OrderBook {
 
     private void applyLevels(ConcurrentSkipListMap<Double, Double> side, List<PriceLevel> deltas) {
         for (PriceLevel level : deltas) {
-            if (level.qty() == 0.0) {
+            if (level.qty() <= 0.0) {
                 side.remove(level.price());
             } else {
                 side.put(level.price(), level.qty());
