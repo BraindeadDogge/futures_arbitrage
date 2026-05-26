@@ -25,7 +25,7 @@ public class OrderBookManager {
 
     public Optional<Tick> getTick(String exchange, String exchangeSymbol, String canonical, double orderSizeUsdt) {
         OrderBook book = books.get(key(exchange, exchangeSymbol));
-        if (book == null) return Optional.empty();
+        if (book == null) return Optional.of(Tick.unreliable(canonical, exchange));
         boolean reliable = book.isInitialized() && !book.isStale(wsStaleThresholdMs);
         if (!reliable) {
             return Optional.of(Tick.unreliable(canonical, exchange));
