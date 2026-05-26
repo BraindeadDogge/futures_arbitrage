@@ -58,7 +58,8 @@ public class HealthMonitor {
             } else {
               log.info("[{}] WS feed recovered", exchange);
             }
-            healthMap.put(exchange, health.withStale(stale));
+            healthMap.compute(
+                exchange, (k, current) -> current == null ? health.withStale(stale) : current.withStale(stale));
           }
         });
   }
