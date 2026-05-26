@@ -49,6 +49,7 @@ public class OpportunityStore implements AutoCloseable {
 
     private void initSchema() throws SQLException {
         try (InputStream is = getClass().getClassLoader().getResourceAsStream("schema.sql")) {
+            if (is == null) throw new SQLException("schema.sql not found on classpath");
             String sql = new String(is.readAllBytes(), StandardCharsets.UTF_8);
             try (Statement stmt = connection.createStatement()) {
                 for (String s : sql.split(";")) {
@@ -65,7 +66,7 @@ public class OpportunityStore implements AutoCloseable {
         buffer.offer(opp);
     }
 
-    public void flush() {
+    public synchronized void flush() {
         List<Opportunity> batch = new ArrayList<>();
         buffer.drainTo(batch);
         if (batch.isEmpty()) return;
@@ -108,7 +109,7 @@ public class OpportunityStore implements AutoCloseable {
         try { flush(); } catch (Exception e) { log.error("Scheduled flush error", e); }
     }
 
-    public OpportunityStats queryStats() throws SQLException {
+    public synchronized OpportunityStats queryStats() throws SQLException {
         try (Statement stmt = connection.createStatement()) {
             ResultSet rs = stmt.executeQuery(
                 "SELECT COUNT(*), AVG(net_spread_pct), MAX(net_spread_pct), MIN(detected_at), MAX(detected_at) FROM opportunities");
@@ -136,7 +137,10 @@ public class OpportunityStore implements AutoCloseable {
 
     @Override
     public void close() {
-        if (scheduler != null) scheduler.shutdown();
+        if (scheduler != null) {
+            scheduler.shutdown();
+            try { scheduler.awaitTermination(5, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        }
         flush();
         try { if (connection != null) connection.close(); } catch (SQLException e) { log.error("Close error", e); }
     }
