@@ -1,9 +1,8 @@
-package com.arbbot.exchange;
+package com.arbbot.exchange.binance;
 
 import static org.junit.jupiter.api.Assertions.*;
 import com.arbbot.health.HealthMonitor;
 import com.arbbot.market.OrderBookManager;
-import com.arbbot.exchange.binance.BinanceWsClient;
 import okhttp3.OkHttpClient;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;

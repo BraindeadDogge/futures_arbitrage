@@ -104,8 +104,13 @@ public class BinanceWsClient extends BaseWsClient {
 
                     List<JsonNode> buffered = pendingDeltas.getOrDefault(symbol, List.of());
                     for (JsonNode delta : buffered) {
+                        long dU = delta.path("U").asLong();
                         long du = delta.path("u").asLong();
                         if (du < lastUpdateId + 1) continue;
+                        if (dU > lastUpdateId + 1) {
+                            log.warn("[binance] Gap in buffered deltas for {}: dU={} > lastUpdateId+1={}", symbol, dU, lastUpdateId + 1);
+                            break;
+                        }
                         book.applyDelta(parseLevels(delta.path("b")), parseLevels(delta.path("a")), -1L);
                     }
                     pendingDeltas.remove(symbol);
@@ -118,7 +123,7 @@ public class BinanceWsClient extends BaseWsClient {
     }
 
     /** Visible-for-testing hook */
-    public void fetchSnapshotForTest(String symbol) {
+    void fetchSnapshotForTest(String symbol) {
         fetchSnapshot(symbol);
     }
 

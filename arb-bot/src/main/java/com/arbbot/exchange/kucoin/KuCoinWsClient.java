@@ -101,8 +101,13 @@ public class KuCoinWsClient extends BaseWsClient {
                 }
                 OrderBook book = orderBookManager.getOrCreateBook("kucoin", kucoinSymbol);
                 if (!book.isInitialized()) {
-                    // Book not initialized - need snapshot first; trigger re-fetch
-                    log.warn("[kucoin] Book not initialized for {}, ignoring delta", kucoinSymbol);
+                    log.warn("[kucoin] Book not initialized for {}, re-subscribing to trigger snapshot", kucoinSymbol);
+                    String uid = String.valueOf(msgId.getAndIncrement());
+                    send("{\"id\":\"" + uid + "\",\"type\":\"unsubscribe\",\"topic\":\"/contractMarket/level2:"
+                        + kucoinSymbol + "\"}");
+                    String uid2 = String.valueOf(msgId.getAndIncrement());
+                    send("{\"id\":\"" + uid2 + "\",\"type\":\"subscribe\",\"topic\":\"/contractMarket/level2:"
+                        + kucoinSymbol + "\",\"privateChannel\":false,\"response\":true}");
                     return;
                 }
                 if (!book.applyDelta(bids, asks, seq)) {

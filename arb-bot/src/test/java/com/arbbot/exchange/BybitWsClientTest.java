@@ -11,7 +11,7 @@ import java.util.List;
 class BybitWsClientTest {
 
     @Test
-    void wsUrlIsConfiguredBaseUrl() {
+    void nameAndInitialStateAreCorrect() {
         var manager = new OrderBookManager(2000);
         var health = new HealthMonitor(2000);
         var client = new BybitWsClient(
