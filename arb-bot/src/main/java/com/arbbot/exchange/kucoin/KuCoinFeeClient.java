@@ -20,9 +20,8 @@ public class KuCoinFeeClient implements ExchangeFeeClient {
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
   private final String baseUrl;
-  @SuppressWarnings("unused")
+  // Credentials are accepted for future authenticated endpoints; not used for fee fetching
   private final String apiKey;
-  @SuppressWarnings("unused")
   private final String apiSecret;
   private final OkHttpClient httpClient;
 
@@ -34,6 +33,8 @@ public class KuCoinFeeClient implements ExchangeFeeClient {
     this.httpClient = httpClient;
   }
 
+  // KuCoin fees come from a public endpoint (/api/v1/contracts/active) — no auth guard needed
+  // unlike other exchange clients that require credentials before fetching.
   @Override
   public Optional<FeeSchedule> fetchFeeSchedule(String canonicalSymbol, String exchangeSymbol) {
     try {
