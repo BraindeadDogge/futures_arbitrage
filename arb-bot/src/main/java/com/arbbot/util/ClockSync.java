@@ -16,8 +16,16 @@ public class ClockSync {
     private static final long WARN_THRESHOLD_MS = 500;
     private static final ObjectMapper mapper = new ObjectMapper();
 
-    private final OkHttpClient httpClient = new OkHttpClient();
+    private final OkHttpClient httpClient;
     private final Map<String, Long> offsets = new ConcurrentHashMap<>();
+
+    public ClockSync() {
+        this.httpClient = new OkHttpClient();
+    }
+
+    public ClockSync(OkHttpClient httpClient) {
+        this.httpClient = httpClient;
+    }
 
     /**
      * Syncs clock for exchange. Returns true if offset exceeds WARN_THRESHOLD_MS. The fieldPath is

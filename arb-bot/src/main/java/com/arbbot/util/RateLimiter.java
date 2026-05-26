@@ -1,27 +1,25 @@
 package com.arbbot.util;
 
-import java.util.concurrent.atomic.AtomicLong;
-
 /** Token bucket rate limiter. Thread-safe. */
 public class RateLimiter {
 
     private final long capacityTokens;
     private final long refillIntervalMs;
-    private final AtomicLong tokens;
-    private volatile long lastRefillTime;
+    private long tokens;
+    private long lastRefillTime;
 
     public RateLimiter(long capacityTokens, long refillIntervalMs) {
         this.capacityTokens = capacityTokens;
         this.refillIntervalMs = refillIntervalMs;
-        this.tokens = new AtomicLong(capacityTokens);
+        this.tokens = capacityTokens;
         this.lastRefillTime = System.currentTimeMillis();
     }
 
     /** Returns true if a token was acquired; false if rate limit exceeded. */
     public synchronized boolean tryAcquire() {
         refill();
-        if (tokens.get() > 0) {
-            tokens.decrementAndGet();
+        if (tokens > 0) {
+            tokens--;
             return true;
         }
         return false;
@@ -32,7 +30,7 @@ public class RateLimiter {
         long elapsed = now - lastRefillTime;
         if (elapsed >= refillIntervalMs) {
             long toAdd = (elapsed / refillIntervalMs) * capacityTokens;
-            tokens.set(Math.min(capacityTokens, tokens.get() + toAdd));
+            tokens = Math.min(capacityTokens, tokens + toAdd);
             lastRefillTime = now;
         }
     }

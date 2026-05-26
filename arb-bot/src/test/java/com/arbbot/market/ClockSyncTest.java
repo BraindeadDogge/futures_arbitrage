@@ -52,7 +52,7 @@ class ClockSyncTest {
 
     @Test
     void noWarnIfOffsetUnderThreshold() {
-        long serverTime = System.currentTimeMillis() + 100;
+        long serverTime = System.currentTimeMillis() + 300;
         server.stubFor(
                 WireMock.get("/time")
                         .willReturn(

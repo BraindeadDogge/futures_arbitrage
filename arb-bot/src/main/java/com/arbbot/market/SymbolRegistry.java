@@ -17,10 +17,18 @@ public class SymbolRegistry {
     private static final Logger log = LoggerFactory.getLogger(SymbolRegistry.class);
     private static final ObjectMapper mapper = new ObjectMapper();
 
-    private final OkHttpClient httpClient = new OkHttpClient();
+    private final OkHttpClient httpClient;
     // canonical → exchange → exchangeSymbol
     private final Map<String, Map<String, String>> symbolMap = new ConcurrentHashMap<>();
-    private List<String> watchedSymbols = List.of();
+    private volatile List<String> watchedSymbols = List.of();
+
+    public SymbolRegistry() {
+        this.httpClient = new OkHttpClient();
+    }
+
+    public SymbolRegistry(OkHttpClient httpClient) {
+        this.httpClient = httpClient;
+    }
 
     public enum ExchangeFormat {
         BINANCE,
@@ -62,7 +70,9 @@ public class SymbolRegistry {
                 for (JsonNode s : root.path("data")) {
                     if (s.path("isInverse").asBoolean(false)) continue;
                     String symbol = s.path("symbol").asText(); // e.g. BTCUSDTM
-                    String base = symbol.replace("USDTM", "").replace("USDT", "");
+                    String base = symbol.endsWith("USDTM") ? symbol.substring(0, symbol.length() - 5)
+                            : symbol.endsWith("USDT")  ? symbol.substring(0, symbol.length() - 4)
+                            : symbol;
                     register(base, exchange, symbol);
                 }
             }
