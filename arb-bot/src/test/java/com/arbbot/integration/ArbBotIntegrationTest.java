@@ -53,22 +53,26 @@ class ArbBotIntegrationTest {
         binanceWs.connect();
         bybitWs.connect();
 
-        long deadline = System.currentTimeMillis() + 30_000;
+        long deadline = System.currentTimeMillis() + 60_000;
         while (System.currentTimeMillis() < deadline) {
-            if (obm.getOrCreateBook("binance", "BTCUSDT").isInitialized() &&
-                obm.getOrCreateBook("bybit", "BTCUSDT").isInitialized()) break;
+            boolean binanceReady = obm.getOrCreateBook("binance", "BTCUSDT").isInitialized();
+            boolean bybitReady = obm.getOrCreateBook("bybit", "BTCUSDT").isInitialized();
+            log.info("Snapshot status — binance: {}, bybit: {}", binanceReady, bybitReady);
+            if (binanceReady && bybitReady) break;
             Thread.sleep(500);
         }
 
         assertTrue(obm.getOrCreateBook("binance", "BTCUSDT").isInitialized(),
-            "Binance order book not initialized within 30s");
+            "Binance order book not initialized within 60s");
         assertTrue(obm.getOrCreateBook("bybit", "BTCUSDT").isInitialized(),
-            "Bybit order book not initialized within 30s");
+            "Bybit order book not initialized within 60s");
 
         var biTick = obm.getTick("binance", "BTCUSDT", "BTC", 1000.0);
         var bbTick = obm.getTick("bybit", "BTCUSDT", "BTC", 1000.0);
-        assertTrue(biTick.isPresent() && biTick.get().isReliable(), "Binance tick not reliable");
-        assertTrue(bbTick.isPresent() && bbTick.get().isReliable(), "Bybit tick not reliable");
+        assertTrue(biTick.isPresent() && biTick.get().isReliable(),
+            "Binance tick not reliable — wsStaleThresholdMs may be too tight for cold start");
+        assertTrue(bbTick.isPresent() && bbTick.get().isReliable(),
+            "Bybit tick not reliable — wsStaleThresholdMs may be too tight for cold start");
 
         assertTrue(biTick.get().bestBid() > 10_000, "Binance BTC bid too low: " + biTick.get().bestBid());
         assertTrue(bbTick.get().bestAsk() > 10_000, "Bybit BTC ask too low: " + bbTick.get().bestAsk());
