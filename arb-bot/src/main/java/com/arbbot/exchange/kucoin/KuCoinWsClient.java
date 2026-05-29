@@ -65,6 +65,13 @@ public class KuCoinWsClient extends BaseWsClient {
     }
 
     @Override
+    protected void onBeforeReconnect() {
+        pendingDeltas.clear();
+        snapshotInProgress.clear();
+        lastAppliedSeq.clear();
+    }
+
+    @Override
     protected void onConnected(WebSocket ws) {
         for (String sym : symbols) {
             pendingDeltas.put(sym, new CopyOnWriteArrayList<>());

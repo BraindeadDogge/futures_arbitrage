@@ -49,6 +49,13 @@ public class BinanceWsClient extends BaseWsClient {
     }
 
     @Override
+    protected void onBeforeReconnect() {
+        pendingDeltas.clear();
+        snapshotInProgress.clear();
+        lastAppliedU.clear();
+    }
+
+    @Override
     protected void onConnected(WebSocket ws) {
         symbols.forEach(symbol -> {
             pendingDeltas.put(symbol, new CopyOnWriteArrayList<>());
