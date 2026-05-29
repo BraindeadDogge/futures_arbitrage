@@ -135,6 +135,33 @@ public class OpportunityStore implements AutoCloseable {
         }
     }
 
+    public synchronized List<com.arbbot.scanner.Opportunity> queryRecent(int limit) throws SQLException {
+        List<com.arbbot.scanner.Opportunity> result = new ArrayList<>();
+        try (PreparedStatement ps = connection.prepareStatement(
+                "SELECT id, canonical_symbol, long_exchange, long_ask_price, short_exchange,"
+                    + " short_bid_price, gross_spread_pct, net_spread_pct, estimated_cost_pct,"
+                    + " detected_at FROM opportunities ORDER BY detected_at DESC LIMIT ?")) {
+            ps.setInt(1, limit);
+            ResultSet rs = ps.executeQuery();
+            while (rs.next()) {
+                result.add(new com.arbbot.scanner.Opportunity(
+                    java.util.UUID.fromString(rs.getString(1)),
+                    rs.getString(2),
+                    rs.getString(3),
+                    rs.getDouble(4),
+                    rs.getString(5),
+                    rs.getDouble(6),
+                    rs.getDouble(7),
+                    rs.getDouble(8),
+                    rs.getDouble(9),
+                    null, null,
+                    0.0,
+                    java.time.Instant.parse(rs.getString(10))));
+            }
+        }
+        return result;
+    }
+
     @Override
     public void close() {
         if (scheduler != null) {
