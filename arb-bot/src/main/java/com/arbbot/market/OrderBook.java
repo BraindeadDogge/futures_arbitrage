@@ -114,6 +114,16 @@ public class OrderBook {
         return asks.isEmpty() ? OptionalDouble.empty() : OptionalDouble.of(asks.firstKey());
     }
 
+    public List<PriceLevel> topBids(int n) {
+        return bids.entrySet().stream().limit(n)
+            .map(e -> new PriceLevel(e.getKey(), e.getValue())).toList();
+    }
+
+    public List<PriceLevel> topAsks(int n) {
+        return asks.entrySet().stream().limit(n)
+            .map(e -> new PriceLevel(e.getKey(), e.getValue())).toList();
+    }
+
     public boolean isStale(long thresholdMs) {
         return !initialized || lastUpdateTime.get().plusMillis(thresholdMs).isBefore(Instant.now());
     }
