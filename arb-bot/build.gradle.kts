@@ -1,7 +1,12 @@
 plugins {
     java
+    application
     id("com.diffplug.spotless") version "6.25.0"
     checkstyle
+}
+
+application {
+    mainClass.set("com.arbbot.Main")
 }
 
 group = "com.arbbot"
