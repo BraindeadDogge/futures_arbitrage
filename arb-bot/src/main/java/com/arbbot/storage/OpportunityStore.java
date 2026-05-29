@@ -84,39 +84,54 @@ public class OpportunityStore implements AutoCloseable {
             String sql = new String(is.readAllBytes(), StandardCharsets.UTF_8);
             try (Statement stmt = connection.createStatement()) {
                 for (String s : sql.split(";")) {
-                    if (!s.isBlank()) stmt.execute(s.trim());
+                    if (s.isBlank()) continue;
+                    String trimmed = s.trim();
+                    try {
+                        stmt.execute(trimmed);
+                    } catch (SQLException e) {
+                        // CREATE TABLE must succeed; INDEX failures are tolerated
+                        // (column may not exist yet on an older DB — migrations add it next)
+                        if (trimmed.toUpperCase().startsWith("CREATE TABLE")) {
+                            throw new SQLException("Schema init failed on: " + trimmed, e);
+                        }
+                        log.debug("Schema statement deferred (will retry after migrations): {}", e.getMessage());
+                    }
                 }
             }
             connection.commit();
+        } catch (SQLException e) {
+            throw e;
         } catch (Exception e) {
             throw new SQLException("Schema init failed", e);
         }
         runMigrations();
     }
 
-    /** ALTER TABLE migrations for columns added after initial schema creation. */
+    /** Migrations for columns and indexes added after initial schema creation. */
     private void runMigrations() {
+        // Each entry: [sql statement, expected-error substring to ignore]
         String[][] migrations = {
-            { "opportunities",         "ADD COLUMN long_best_bid REAL NOT NULL DEFAULT 0" },
-            { "opportunities",         "ADD COLUMN short_best_ask REAL NOT NULL DEFAULT 0" },
-            { "opportunities",         "ADD COLUMN max_volume_usdt REAL NOT NULL DEFAULT 0" },
-            { "opportunities",         "ADD COLUMN long_ask_depth_usdt REAL NOT NULL DEFAULT 0" },
-            { "opportunities",         "ADD COLUMN short_bid_depth_usdt REAL NOT NULL DEFAULT 0" },
-            { "opportunity_sessions",  "ADD COLUMN min_net_pct REAL NOT NULL DEFAULT 0" },
-            { "opportunity_sessions",  "ADD COLUMN entry_net_pct REAL NOT NULL DEFAULT 0" },
-            { "opportunity_sessions",  "ADD COLUMN exit_net_pct REAL NOT NULL DEFAULT 0" },
-            { "opportunity_sessions",  "ADD COLUMN peak_volume_usdt REAL NOT NULL DEFAULT 0" },
-            { "opportunity_sessions",  "ADD COLUMN avg_volume_usdt REAL NOT NULL DEFAULT 0" },
+            { "ALTER TABLE opportunities ADD COLUMN long_best_bid REAL NOT NULL DEFAULT 0",        "duplicate column" },
+            { "ALTER TABLE opportunities ADD COLUMN short_best_ask REAL NOT NULL DEFAULT 0",       "duplicate column" },
+            { "ALTER TABLE opportunities ADD COLUMN max_volume_usdt REAL NOT NULL DEFAULT 0",      "duplicate column" },
+            { "ALTER TABLE opportunities ADD COLUMN long_ask_depth_usdt REAL NOT NULL DEFAULT 0",  "duplicate column" },
+            { "ALTER TABLE opportunities ADD COLUMN short_bid_depth_usdt REAL NOT NULL DEFAULT 0", "duplicate column" },
+            { "ALTER TABLE opportunity_sessions ADD COLUMN min_net_pct REAL NOT NULL DEFAULT 0",   "duplicate column" },
+            { "ALTER TABLE opportunity_sessions ADD COLUMN entry_net_pct REAL NOT NULL DEFAULT 0", "duplicate column" },
+            { "ALTER TABLE opportunity_sessions ADD COLUMN exit_net_pct REAL NOT NULL DEFAULT 0",  "duplicate column" },
+            { "ALTER TABLE opportunity_sessions ADD COLUMN peak_volume_usdt REAL NOT NULL DEFAULT 0", "duplicate column" },
+            { "ALTER TABLE opportunity_sessions ADD COLUMN avg_volume_usdt REAL NOT NULL DEFAULT 0",  "duplicate column" },
+            // Index that depends on max_volume_usdt — must come after the column migration above
+            { "CREATE INDEX IF NOT EXISTS idx_opp_volume ON opportunities(max_volume_usdt DESC)", "already exists" },
         };
         try (Statement stmt = connection.createStatement()) {
             for (String[] m : migrations) {
                 try {
-                    stmt.execute("ALTER TABLE " + m[0] + " " + m[1]);
+                    stmt.execute(m[0]);
                     connection.commit();
                 } catch (SQLException e) {
-                    // "duplicate column name" = column already exists from schema.sql, ignore
-                    if (!e.getMessage().contains("duplicate column")) {
-                        log.warn("Migration skipped [{} {}]: {}", m[0], m[1], e.getMessage());
+                    if (!e.getMessage().contains(m[1])) {
+                        log.warn("Migration skipped [{}]: {}", m[0], e.getMessage());
                     }
                     try { connection.rollback(); } catch (SQLException ignored) {}
                 }
