@@ -23,8 +23,8 @@ class SpreadCalculatorTest {
 
     @Test
     void grossSpreadComputedCorrectly() {
-        var buyTick = new Tick("BTC", "binance", 49999, 50000, 50000, 49999, Instant.now(), true);
-        var sellTick = new Tick("BTC", "bybit", 50100, 50101, 50101, 50100, Instant.now(), true);
+        var buyTick = new Tick("BTC", "binance", 49999, 50000, 50000, 49999, 0, 0, Instant.now(), true);
+        var sellTick = new Tick("BTC", "bybit", 50100, 50101, 50101, 50100, 0, 0, Instant.now(), true);
 
         double gross = SpreadCalculator.grossSpread(buyTick, sellTick);
         assertEquals(0.002, gross, 0.00001);
@@ -32,8 +32,8 @@ class SpreadCalculatorTest {
 
     @Test
     void netSpreadSubtractsFees() {
-        var buyTick = new Tick("BTC", "binance", 49999, 50000, 50000, 49999, Instant.now(), true);
-        var sellTick = new Tick("BTC", "bybit", 50100, 50101, 50101, 50100, Instant.now(), true);
+        var buyTick = new Tick("BTC", "binance", 49999, 50000, 50000, 49999, 0, 0, Instant.now(), true);
+        var sellTick = new Tick("BTC", "bybit", 50100, 50101, 50101, 50100, 0, 0, Instant.now(), true);
         // Gross = 0.2%, fees = 2*(0.0004+0.0006) = 0.002 → net = 0.0
         var engine = feeEngineWith(0.0004, 0.0006);
 
@@ -43,8 +43,8 @@ class SpreadCalculatorTest {
 
     @Test
     void negativeSpreadExcluded() {
-        var buyTick = new Tick("BTC", "binance", 50099, 50100, 50100, 50099, Instant.now(), true);
-        var sellTick = new Tick("BTC", "bybit", 50000, 50001, 50001, 50000, Instant.now(), true);
+        var buyTick = new Tick("BTC", "binance", 50099, 50100, 50100, 50099, 0, 0, Instant.now(), true);
+        var sellTick = new Tick("BTC", "bybit", 50000, 50001, 50001, 50000, 0, 0, Instant.now(), true);
 
         double gross = SpreadCalculator.grossSpread(buyTick, sellTick);
         assertTrue(gross < 0);
@@ -52,8 +52,8 @@ class SpreadCalculatorTest {
 
     @Test
     void zeroEffectivePriceReturnsNonFinite() {
-        var buyTick = new Tick("BTC", "binance", 0, 0, 0, 0, Instant.now(), false);
-        var sellTick = new Tick("BTC", "bybit", 50100, 50101, 50101, 50100, Instant.now(), true);
+        var buyTick = new Tick("BTC", "binance", 0, 0, 0, 0, 0, 0, Instant.now(), false);
+        var sellTick = new Tick("BTC", "bybit", 50100, 50101, 50101, 50100, 0, 0, Instant.now(), true);
 
         double gross = SpreadCalculator.grossSpread(buyTick, sellTick);
         assertFalse(Double.isFinite(gross) && gross > 0);

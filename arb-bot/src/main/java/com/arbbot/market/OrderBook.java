@@ -21,6 +21,10 @@ public class OrderBook {
         new ConcurrentSkipListMap<>();
     private final AtomicLong lastSeqNum = new AtomicLong(-1);
     private final AtomicReference<Instant> lastUpdateTime = new AtomicReference<>(Instant.EPOCH);
+    private final AtomicReference<Instant> lastBestBidChangeTime = new AtomicReference<>(Instant.EPOCH);
+    private final AtomicReference<Instant> lastBestAskChangeTime = new AtomicReference<>(Instant.EPOCH);
+    private volatile double lastKnownBestBid = Double.NaN;
+    private volatile double lastKnownBestAsk = Double.NaN;
     private volatile boolean initialized = false;
 
     public OrderBook(String exchange, String symbol) {
@@ -34,7 +38,12 @@ public class OrderBook {
         asks.clear();
         asks.putAll(newAsks);
         lastSeqNum.set(seqNum);
-        lastUpdateTime.set(Instant.now());
+        Instant now = Instant.now();
+        lastUpdateTime.set(now);
+        lastBestBidChangeTime.set(now);
+        lastBestAskChangeTime.set(now);
+        lastKnownBestBid = bids.isEmpty() ? Double.NaN : bids.firstKey();
+        lastKnownBestAsk = asks.isEmpty() ? Double.NaN : asks.firstKey();
         initialized = true;
     }
 
@@ -54,7 +63,18 @@ public class OrderBook {
         applyLevels(bids, bidDeltas);
         applyLevels(asks, askDeltas);
         if (seqNum != -1) lastSeqNum.set(seqNum);
-        lastUpdateTime.set(Instant.now());
+        Instant now = Instant.now();
+        lastUpdateTime.set(now);
+        double newBestBid = bids.isEmpty() ? Double.NaN : bids.firstKey();
+        double newBestAsk = asks.isEmpty() ? Double.NaN : asks.firstKey();
+        if (Double.compare(newBestBid, lastKnownBestBid) != 0) {
+            lastBestBidChangeTime.set(now);
+            lastKnownBestBid = newBestBid;
+        }
+        if (Double.compare(newBestAsk, lastKnownBestAsk) != 0) {
+            lastBestAskChangeTime.set(now);
+            lastKnownBestAsk = newBestAsk;
+        }
         return true;
     }
 
@@ -148,6 +168,16 @@ public class OrderBook {
 
     public boolean isStale(long thresholdMs) {
         return !initialized || lastUpdateTime.get().plusMillis(thresholdMs).isBefore(Instant.now());
+    }
+
+    /** True if the best bid price hasn't moved in longer than thresholdMs. */
+    public boolean isBestBidFrozen(long thresholdMs) {
+        return initialized && lastBestBidChangeTime.get().plusMillis(thresholdMs).isBefore(Instant.now());
+    }
+
+    /** True if the best ask price hasn't moved in longer than thresholdMs. */
+    public boolean isBestAskFrozen(long thresholdMs) {
+        return initialized && lastBestAskChangeTime.get().plusMillis(thresholdMs).isBefore(Instant.now());
     }
 
     public boolean isInitialized() { return initialized; }

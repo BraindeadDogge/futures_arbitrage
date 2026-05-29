@@ -26,6 +26,12 @@ public class OpportunityScanner {
     private static final double ESTIMATED_HOLDING_HOURS = 4.0;
     /** Consecutive missing ticks before a session is closed (~500 ms at 50 ms scan interval). */
     private static final int SESSION_GAP_TICKS = 10;
+    /** Only persist to DB if net% changed by more than this, or SAVE_DEBOUNCE_MS has elapsed. */
+    private static final double SAVE_DEBOUNCE_PCT = 0.01;
+    private static final long SAVE_DEBOUNCE_MS = 2_000;
+    /** Only record a session tick if net% changed by more than this, or TICK_DEBOUNCE_MS has elapsed. */
+    private static final double TICK_DEBOUNCE_PCT = 0.01;
+    private static final long TICK_DEBOUNCE_MS = 1_000;
 
     private record TickSnapshot(long recordedAt, double netPct, double grossPct,
                                 double maxVolumeUsdt, double longAsk, double shortBid) {}
@@ -40,6 +46,12 @@ public class OpportunityScanner {
         int tickCount = 0, missingTicks = 0;
         boolean seenThisScan = false;
         final List<TickSnapshot> ticks = new ArrayList<>();
+        // Debounce: last DB-saved state
+        double lastSavedNetPct = Double.NaN;
+        long lastSavedMs = 0;
+        // Debounce: last tick recorded into ticks list
+        double lastTickNetPct = Double.NaN;
+        long lastTickMs = 0;
 
         ActiveSession(String symbol, String longEx, String shortEx) {
             this.symbol = symbol; this.longEx = longEx; this.shortEx = shortEx;
@@ -145,36 +157,26 @@ public class OpportunityScanner {
         double cost = feeEngine.getTotalRoundTripCost(
             symbol, buyTick.exchange(), symbol, sellTick.exchange(), ESTIMATED_HOLDING_HOURS);
 
-        // Order book stats for sizing and liquidity context
+        // Compute max profitable volume using depth from Tick fields
         String longSym  = exchangeSymbols.getOrDefault(buyTick.exchange(), "");
         String shortSym = exchangeSymbols.getOrDefault(sellTick.exchange(), "");
         OrderBook longBook  = orderBookManager.getOrCreateBook(buyTick.exchange(), longSym);
         OrderBook shortBook = orderBookManager.getOrCreateBook(sellTick.exchange(), shortSym);
-        double maxVol         = SpreadCalculator.maxProfitableVolume(longBook, shortBook, cost);
-        double longAskDepth   = longBook.askDepthUsdt(10);
-        double shortBidDepth  = shortBook.bidDepthUsdt(10);
+        double maxVol        = SpreadCalculator.maxProfitableVolume(longBook, shortBook, cost);
+        // Depth already captured atomically in Tick at the same instant as effective prices
+        double longAskDepth  = buyTick.askDepthUsdt();
+        double shortBidDepth = sellTick.bidDepthUsdt();
 
-        Opportunity opp = new Opportunity(
-            UUID.randomUUID(), symbol,
-            buyTick.exchange(), buyTick.effectiveBuyPrice(), buyTick.bestBid(),
-            sellTick.exchange(), sellTick.effectiveSellPrice(), sellTick.bestAsk(),
-            gross, net, cost,
-            longFunding, shortFunding,
-            config.orderSizeUsdt(),
-            maxVol, longAskDepth, shortBidDepth,
-            Instant.now()
-        );
+        double netPct = net * 100;
+        double grossPct = gross * 100;
+        long nowMs = System.currentTimeMillis();
 
-        store.save(opp);
-
-        // Session tracking
+        // Session tracking (always update stats; debounce only controls persistence)
         String sessionKey = symbol + "|" + buyTick.exchange() + "|" + sellTick.exchange();
         ActiveSession session = activeSessions.computeIfAbsent(sessionKey,
             k -> new ActiveSession(symbol, buyTick.exchange(), sellTick.exchange()));
         session.seenThisScan = true;
         session.missingTicks = 0;
-        double netPct = net * 100;
-        double grossPct = gross * 100;
         if (session.entryNet < 0) session.entryNet = netPct;
         session.lastNet = netPct;
         session.peakNet = Math.max(session.peakNet, netPct);
@@ -183,12 +185,41 @@ public class OpportunityScanner {
         session.peakVolume = Math.max(session.peakVolume, maxVol);
         session.sumVolume += maxVol;
         session.tickCount++;
-        session.ticks.add(new TickSnapshot(System.currentTimeMillis(), netPct, grossPct,
-            maxVol, buyTick.effectiveBuyPrice(), sellTick.effectiveSellPrice()));
+
+        // Debounced tick recording
+        boolean tickChanged = Double.isNaN(session.lastTickNetPct)
+            || Math.abs(netPct - session.lastTickNetPct) >= TICK_DEBOUNCE_PCT
+            || (nowMs - session.lastTickMs) >= TICK_DEBOUNCE_MS;
+        if (tickChanged) {
+            session.ticks.add(new TickSnapshot(nowMs, netPct, grossPct,
+                maxVol, buyTick.effectiveBuyPrice(), sellTick.effectiveSellPrice()));
+            session.lastTickNetPct = netPct;
+            session.lastTickMs = nowMs;
+        }
+
+        // Debounced DB write
+        boolean shouldSave = Double.isNaN(session.lastSavedNetPct)
+            || Math.abs(netPct - session.lastSavedNetPct) >= SAVE_DEBOUNCE_PCT
+            || (nowMs - session.lastSavedMs) >= SAVE_DEBOUNCE_MS;
+        if (shouldSave) {
+            Opportunity opp = new Opportunity(
+                UUID.randomUUID(), symbol,
+                buyTick.exchange(), buyTick.effectiveBuyPrice(), buyTick.bestBid(),
+                sellTick.exchange(), sellTick.effectiveSellPrice(), sellTick.bestAsk(),
+                gross, net, cost,
+                longFunding, shortFunding,
+                config.orderSizeUsdt(),
+                maxVol, longAskDepth, shortBidDepth,
+                Instant.now()
+            );
+            store.save(opp);
+            session.lastSavedNetPct = netPct;
+            session.lastSavedMs = nowMs;
+        }
 
         log.info("OPPORTUNITY: sym={} long={} short={} gross={}% net={}% maxVol=${}",
             symbol, buyTick.exchange(), sellTick.exchange(),
-            String.format("%.4f", gross * 100), String.format("%.4f", net * 100),
+            String.format("%.4f", grossPct), String.format("%.4f", netPct),
             String.format("%.0f", maxVol));
     }
 }

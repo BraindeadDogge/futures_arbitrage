@@ -9,10 +9,12 @@ public record Tick(
     double bestAsk,
     double effectiveBuyPrice,
     double effectiveSellPrice,
+    double askDepthUsdt,
+    double bidDepthUsdt,
     Instant timestamp,
     boolean isReliable) {
 
   public static Tick unreliable(String symbol, String exchange) {
-    return new Tick(symbol, exchange, 0, 0, 0, 0, Instant.now(), false);
+    return new Tick(symbol, exchange, 0, 0, 0, 0, 0, 0, Instant.now(), false);
   }
 }
