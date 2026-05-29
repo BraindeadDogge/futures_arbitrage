@@ -1,6 +1,8 @@
 package com.arbbot;
 
 import com.arbbot.config.AppConfig;
+import com.arbbot.dashboard.DashboardServer;
+import com.arbbot.dashboard.SnapshotAssembler;
 import com.arbbot.exchange.binance.BinanceFeeClient;
 import com.arbbot.exchange.binance.BinanceWsClient;
 import com.arbbot.exchange.bybit.BybitFeeClient;
@@ -139,6 +141,19 @@ public class Main {
             () -> metrics.scanTimer().record(scanner::scan),
             0, scanConfig.scanIntervalMs(), TimeUnit.MILLISECONDS);
 
+        // 11b. Dashboard
+        var dashCfg = config.dashboardConfig();
+        DashboardServer dashServer = null;
+        if (dashCfg.enabled()) {
+            var assembler = new SnapshotAssembler(
+                obManager, symbolRegistry, feeEngine, healthMonitor, store,
+                scanConfig, List.copyOf(enabledExchanges));
+            dashServer = new DashboardServer(dashCfg.port(), assembler);
+            dashServer.start();
+            log.info("Dashboard: http://localhost:{}/", dashCfg.port());
+        }
+        final DashboardServer dashServerRef = dashServer;
+
         // 12. Health check scheduler
         ScheduledExecutorService healthScheduler = Executors.newSingleThreadScheduledExecutor(
             Thread.ofVirtual().name("health").factory());
@@ -154,6 +169,7 @@ public class Main {
         // 13. Shutdown hook
         Runtime.getRuntime().addShutdownHook(Thread.ofVirtual().name("shutdown").unstarted(() -> {
             log.info("Shutting down...");
+            if (dashServerRef != null) dashServerRef.stop();
             scanScheduler.shutdown();
             healthScheduler.shutdown();
             wsClients.forEach(com.arbbot.exchange.Exchange::disconnect);
@@ -191,8 +207,8 @@ public class Main {
         return switch (exchange) {
             case "binance" -> "serverTime";
             case "kucoin" -> "data";
-            case "bybit" -> "timeSecond";
-            case "okx" -> "ts";
+            case "bybit" -> "time";          // root-level field, already milliseconds
+            case "okx" -> "/data/0/ts";       // nested, milliseconds
             default -> "time";
         };
     }
