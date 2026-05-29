@@ -9,11 +9,13 @@ import java.util.concurrent.ConcurrentHashMap;
 public class OrderBookManager {
 
     private static final Logger log = LoggerFactory.getLogger(OrderBookManager.class);
-    private static final long PRICE_FREEZE_THRESHOLD_MS = 30_000;
+    private static final long PRICE_FREEZE_THRESHOLD_MS = 60_000;
 
     private final long wsStaleThresholdMs;
     // key: "exchange:exchangeSymbol"
     private final Map<String, OrderBook> books = new ConcurrentHashMap<>();
+    // tracks which books are currently in a frozen state to log only on state transitions
+    private final Map<String, Boolean> priceFreezeState = new ConcurrentHashMap<>();
 
     public OrderBookManager(long wsStaleThresholdMs) {
         this.wsStaleThresholdMs = wsStaleThresholdMs;
@@ -31,10 +33,16 @@ public class OrderBookManager {
         if (!reliable) {
             return Optional.of(Tick.unreliable(canonical, exchange));
         }
+        String bookKey = exchange + "/" + exchangeSymbol;
         if (book.isBestBidFrozen(PRICE_FREEZE_THRESHOLD_MS)) {
-            log.warn("Price freeze detected: {}/{} best bid unchanged for >{}s — marking unreliable",
-                exchange, exchangeSymbol, PRICE_FREEZE_THRESHOLD_MS / 1000);
+            if (!Boolean.TRUE.equals(priceFreezeState.put(bookKey, true))) {
+                log.warn("Price freeze: {}/{} best bid unchanged >{}s — excluding from scanner",
+                    exchange, exchangeSymbol, PRICE_FREEZE_THRESHOLD_MS / 1000);
+            }
             return Optional.of(Tick.unreliable(canonical, exchange));
+        }
+        if (Boolean.TRUE.equals(priceFreezeState.put(bookKey, false))) {
+            log.info("Price freeze resolved: {}/{} best bid is moving again", exchange, exchangeSymbol);
         }
         double bid = book.bestBid().orElse(0);
         double ask = book.bestAsk().orElse(0);
