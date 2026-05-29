@@ -217,7 +217,7 @@ public class Main {
         return switch (exchange) {
             case "binance" -> "/fapi/v1/exchangeInfo";
             case "kucoin" -> "/api/v1/contracts/active";
-            case "bybit" -> "/v5/market/instruments-info?category=linear";
+            case "bybit" -> "/v5/market/instruments-info?category=linear&limit=1000";
             case "okx" -> "/api/v5/public/instruments?instType=SWAP";
             default -> "/";
         };

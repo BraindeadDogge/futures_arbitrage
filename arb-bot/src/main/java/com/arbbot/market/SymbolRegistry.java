@@ -69,19 +69,24 @@ public class SymbolRegistry {
             case KUCOIN -> {
                 for (JsonNode s : root.path("data")) {
                     if (s.path("isInverse").asBoolean(false)) continue;
-                    String symbol = s.path("symbol").asText(); // e.g. BTCUSDTM
+                    String symbol = s.path("symbol").asText(); // e.g. XBTUSDTM, ETHUSDTM
                     String base = symbol.endsWith("USDTM") ? symbol.substring(0, symbol.length() - 5)
                             : symbol.endsWith("USDT")  ? symbol.substring(0, symbol.length() - 4)
                             : symbol;
+                    // KuCoin uses the legacy "XBT" ticker for Bitcoin
+                    if ("XBT".equals(base)) base = "BTC";
                     register(base, exchange, symbol);
                 }
             }
             case BYBIT -> {
                 for (JsonNode s : root.path("result").path("list")) {
                     if (!"LinearPerpetual".equals(s.path("contractType").asText())) continue;
-                    String sym = s.path("symbol").asText(); // e.g. BTCUSDT
-                    String base = sym.replace("USDT", "");
-                    register(base, exchange, sym);
+                    String sym = s.path("symbol").asText();
+                    // Skip PERP-quoted contracts (e.g. BTCPERP); only keep USDT-settled
+                    if (!sym.endsWith("USDT")) continue;
+                    // baseCoin is provided directly by the API — no string manipulation needed
+                    String base = s.path("baseCoin").asText();
+                    if (!base.isEmpty()) register(base, exchange, sym);
                 }
             }
             case OKX -> {
