@@ -8,17 +8,36 @@ import com.arbbot.market.Tick;
 import com.arbbot.market.SymbolRegistry;
 import com.arbbot.risk.RiskFilter;
 import com.arbbot.storage.OpportunityStore;
+import com.arbbot.storage.OpportunityStore.OpportunitySession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class OpportunityScanner {
 
     private static final Logger log = LoggerFactory.getLogger(OpportunityScanner.class);
     private static final double ESTIMATED_HOLDING_HOURS = 4.0;
+    /** Consecutive missing ticks before a session is closed (~500 ms at 50 ms scan interval). */
+    private static final int SESSION_GAP_TICKS = 10;
+
+    private static class ActiveSession {
+        final String id = UUID.randomUUID().toString();
+        final String symbol, longEx, shortEx;
+        final long startedAt = System.currentTimeMillis();
+        double peakNet = 0, sumNet = 0;
+        int tickCount = 0, missingTicks = 0;
+        boolean seenThisScan = false;
+
+        ActiveSession(String symbol, String longEx, String shortEx) {
+            this.symbol = symbol; this.longEx = longEx; this.shortEx = shortEx;
+        }
+    }
+
+    private final Map<String, ActiveSession> activeSessions = new ConcurrentHashMap<>();
 
     private final OrderBookManager orderBookManager;
     private final SymbolRegistry symbolRegistry;
@@ -39,6 +58,8 @@ public class OpportunityScanner {
     }
 
     public void scan() {
+        activeSessions.values().forEach(s -> s.seenThisScan = false);
+
         for (String canonical : symbolRegistry.getWatchedSymbols()) {
             Map<String, String> exchangeSymbols = symbolRegistry.getExchangeSymbolsFor(canonical);
             List<Tick> ticks = orderBookManager.getAllTicks(canonical, exchangeSymbols, config.orderSizeUsdt());
@@ -52,6 +73,29 @@ public class OpportunityScanner {
                 }
             }
         }
+
+        closeStaleSessions();
+    }
+
+    private void closeStaleSessions() {
+        long now = System.currentTimeMillis();
+        activeSessions.entrySet().removeIf(entry -> {
+            ActiveSession s = entry.getValue();
+            if (s.seenThisScan) { s.missingTicks = 0; return false; }
+            s.missingTicks++;
+            if (s.missingTicks >= SESSION_GAP_TICKS && s.tickCount > 0) {
+                store.saveSession(new OpportunitySession(
+                    s.id, s.symbol, s.longEx, s.shortEx,
+                    Instant.ofEpochMilli(s.startedAt),
+                    Instant.ofEpochMilli(now),
+                    s.peakNet,
+                    s.tickCount > 0 ? s.sumNet / s.tickCount : 0,
+                    now - s.startedAt,
+                    s.tickCount));
+                return true;
+            }
+            return false;
+        });
     }
 
     private void evaluatePair(String symbol, Tick buyTick, Tick sellTick) {
@@ -89,6 +133,18 @@ public class OpportunityScanner {
         );
 
         store.save(opp);
+
+        // Update session
+        String sessionKey = symbol + "|" + buyTick.exchange() + "|" + sellTick.exchange();
+        ActiveSession session = activeSessions.computeIfAbsent(sessionKey,
+            k -> new ActiveSession(symbol, buyTick.exchange(), sellTick.exchange()));
+        session.seenThisScan = true;
+        session.missingTicks = 0;
+        double netPct = net * 100;
+        session.peakNet = Math.max(session.peakNet, netPct);
+        session.sumNet += netPct;
+        session.tickCount++;
+
         log.info("OPPORTUNITY: sym={} long={} short={} gross={}% net={}%",
             symbol, buyTick.exchange(), sellTick.exchange(), gross * 100, net * 100);
     }

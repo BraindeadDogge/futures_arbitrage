@@ -264,7 +264,7 @@
     <div id="spreads-wrap">
       <table id="spreads-table">
         <thead><tr>
-          <th>SYMBOL</th><th>LONG</th><th>SHORT</th><th>GROSS%</th><th>NET%</th>
+          <th>SYMBOL</th><th>LONG</th><th>SHORT</th><th>GROSS%</th><th>NET%</th><th>MAX VOL</th>
         </tr></thead>
         <tbody id="spreads-body"></tbody>
       </table>
@@ -306,9 +306,11 @@ const MAX_HIST_TICKS     = 150;      // ~30 s of SSE ticks per opp
 const MAX_HISTORY_ROWS   = 100;      // max rows in history table
 
 // ── State ─────────────────────────────────────────────────────────────────
-let lastSnap   = null;
-let obSymbol   = null;
+let lastSnap    = null;
+let obSymbol    = null;
 let lastSymList = '';
+// DB-backed sessions keyed by id (prevents duplicates from repeated SSE ticks)
+const dbSessions = new Map();
 
 /**
  * activeOpps: Map<key, OppEntry>
@@ -381,6 +383,7 @@ function render(snap) {
   renderFunding(snap.prices);
   updateActiveOpps(snap.spreads);
   renderActiveOpps();
+  updateDbSessions(snap.recentSessions || []);
   renderHistory();
   renderSymbolTabs(snap.prices);
   renderOrderBooks(snap.prices);
@@ -419,12 +422,17 @@ function renderSpreads(spreads) {
   document.getElementById('spreads-body').innerHTML = spreads.slice(0, 60).map(r => {
     const cls    = r.viable ? 'row-viable' : r.netSpreadPct < 0 ? 'row-neg' : '';
     const netCls = r.netSpreadPct > 0.05 ? 'net-pos' : r.netSpreadPct > 0 ? 'net-dim' : 'net-neg';
+    const vol    = r.maxVolumeUsdt > 0 ? fmtUsdt(r.maxVolumeUsdt) : '—';
+    const volCls = r.maxVolumeUsdt >= 50000 ? 'style="color:var(--green)"'
+                 : r.maxVolumeUsdt >= 10000 ? 'style="color:var(--yellow)"'
+                 : 'style="color:var(--dim)"';
     return `<tr class="${cls}">
       <td><b style="color:var(--teal)">${r.symbol}</b></td>
       <td>${r.longExchange}</td>
       <td>${r.shortExchange}</td>
       <td style="color:var(--dim)">${r.grossSpreadPct.toFixed(3)}%</td>
       <td class="${netCls}">${r.netSpreadPct.toFixed(3)}%</td>
+      <td ${volCls}>${vol}</td>
     </tr>`;
   }).join('');
 }
@@ -551,24 +559,54 @@ function renderActiveOpps() {
   el.innerHTML = html;
 }
 
-// ── History render ─────────────────────────────────────────────────────────
+// ── DB session sync ────────────────────────────────────────────────────────
+function updateDbSessions(sessions) {
+  for (const s of sessions) dbSessions.set(s.id, s);
+}
+
+// ── History render (DB-backed, persists across restarts) ───────────────────
 function renderHistory() {
   const wrap = document.getElementById('history-wrap');
-  if (oppHistory.length === 0) {
+  // Merge DB sessions with in-flight JS history (not yet confirmed by DB)
+  const dbList = [...dbSessions.values()]
+    .sort((a, b) => b.endedAtMs - a.endedAtMs)
+    .slice(0, 100);
+  const dbIds = new Set(dbList.map(s => s.id));
+  // Include JS-local items not yet in DB (recently expired, flushed on next interval)
+  const jsList = oppHistory.filter(h => !h.dbId || !dbIds.has(h.dbId));
+
+  const all = [
+    ...dbList.map(s => ({
+      symbol: s.symbol, longEx: s.longExchange, shortEx: s.shortExchange,
+      peak: s.peakNetPct, avg: s.avgNetPct, duration: s.durationMs,
+      endedAt: s.endedAtMs, ticks: s.tickCount, fromDb: true
+    })),
+    ...jsList.map(h => ({
+      symbol: h.symbol, longEx: h.longEx, shortEx: h.shortEx,
+      peak: h.peak, avg: null, duration: h.duration,
+      endedAt: h.endedAt, ticks: null, fromDb: false
+    }))
+  ].sort((a, b) => b.endedAt - a.endedAt).slice(0, 100);
+
+  if (all.length === 0) {
     wrap.innerHTML = '<div class="no-opps">No completed opportunities yet</div>';
     return;
   }
   let html = `<table class="opp-table">
     <thead><tr>
-      <th>SYMBOL</th><th>DIRECTION</th><th>PEAK NET %</th><th>DURATION</th><th>ENDED</th>
+      <th>SYMBOL</th><th>DIRECTION</th><th>PEAK%</th><th>AVG%</th><th>DURATION</th><th>TICKS</th><th>ENDED</th>
     </tr></thead><tbody>`;
-  for (const h of oppHistory) {
+  for (const h of all) {
     const peakCol = h.peak >= 0.15 ? 'var(--green)' : h.peak >= 0.05 ? 'var(--yellow)' : 'var(--dim)';
+    const avgStr  = h.avg != null ? h.avg.toFixed(3) + '%' : '—';
+    const ticks   = h.ticks != null ? h.ticks.toLocaleString() : '—';
     html += `<tr>
       <td class="opp-sym">${h.symbol}</td>
       <td class="opp-pair">${h.longEx} <span style="color:var(--dim)">→</span> ${h.shortEx}</td>
       <td style="color:${peakCol};font-weight:bold">${h.peak.toFixed(3)}%</td>
+      <td style="color:var(--dim)">${avgStr}</td>
       <td style="color:var(--dim)">${fmtDuration(h.duration)}</td>
+      <td style="color:var(--dim)">${ticks}</td>
       <td style="color:var(--dim)" data-endedat="${h.endedAt}">${fmtAgo(Date.now() - h.endedAt)}</td>
     </tr>`;
   }
@@ -657,8 +695,14 @@ function buildBook(t) {
     </div>`;
   }).join('');
 
+  const bidDep = t.bidDepthUsdt > 0 ? fmtUsdt(t.bidDepthUsdt) : '';
+  const askDep = t.askDepthUsdt > 0 ? fmtUsdt(t.askDepthUsdt) : '';
+  const depStr = (bidDep || askDep)
+    ? `<span style="font-size:9px;color:var(--dim);font-weight:normal"> bid:${bidDep} ask:${askDep}</span>`
+    : '';
+
   return `<div class="ob-panel">
-    <div class="ob-ex-hdr">${t.exchange.toUpperCase()}</div>
+    <div class="ob-ex-hdr">${t.exchange.toUpperCase()}${depStr}</div>
     <div class="ob-col-hdr"><span>PRICE</span><span>QTY</span><span>TOTAL</span></div>
     <div class="ob-asks">${askRows}</div>
     <div class="ob-mid">
@@ -688,6 +732,11 @@ function renderStats(stats) {
 }
 
 // ── Formatters ────────────────────────────────────────────────────────────
+function fmtUsdt(v) {
+  if (v >= 1e6)  return '$' + (v / 1e6).toFixed(1) + 'M';
+  if (v >= 1000) return '$' + (v / 1000).toFixed(0) + 'K';
+  return '$' + v.toFixed(0);
+}
 function fmtPrice(p) {
   if (!p) return '—';
   return p >= 10000 ? p.toFixed(1)

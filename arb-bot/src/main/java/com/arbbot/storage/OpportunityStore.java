@@ -16,6 +16,7 @@ public class OpportunityStore implements AutoCloseable {
     private final String dbPath;
     private final long flushIntervalMs;
     private final BlockingQueue<Opportunity> buffer = new LinkedBlockingQueue<>();
+    private final BlockingQueue<OpportunitySession> sessionBuffer = new LinkedBlockingQueue<>();
     private Connection connection;
     private ScheduledExecutorService scheduler;
 
@@ -27,6 +28,19 @@ public class OpportunityStore implements AutoCloseable {
         Map<String, Long> countByExchangePair,
         java.time.Instant firstSeen,
         java.time.Instant lastSeen
+    ) {}
+
+    public record OpportunitySession(
+        String id,
+        String symbol,
+        String longExchange,
+        String shortExchange,
+        java.time.Instant startedAt,
+        java.time.Instant endedAt,
+        double peakNetPct,
+        double avgNetPct,
+        long durationMs,
+        int tickCount
     ) {}
 
     public OpportunityStore(String dbPath, long flushIntervalMs) {
@@ -66,7 +80,16 @@ public class OpportunityStore implements AutoCloseable {
         buffer.offer(opp);
     }
 
+    public void saveSession(OpportunitySession session) {
+        sessionBuffer.offer(session);
+    }
+
     public synchronized void flush() {
+        flushOpportunities();
+        flushSessions();
+    }
+
+    private void flushOpportunities() {
         List<Opportunity> batch = new ArrayList<>();
         buffer.drainTo(batch);
         if (batch.isEmpty()) return;
@@ -100,7 +123,40 @@ public class OpportunityStore implements AutoCloseable {
             connection.commit();
             log.debug("Flushed {} opportunities to SQLite", batch.size());
         } catch (SQLException e) {
-            log.error("Flush failed: {}", e.getMessage());
+            log.error("Opportunities flush failed: {}", e.getMessage());
+            try { connection.rollback(); } catch (SQLException ignored) {}
+        }
+    }
+
+    private void flushSessions() {
+        List<OpportunitySession> batch = new ArrayList<>();
+        sessionBuffer.drainTo(batch);
+        if (batch.isEmpty()) return;
+        String sql = """
+            INSERT OR IGNORE INTO opportunity_sessions
+            (id, canonical_symbol, long_exchange, short_exchange,
+             started_at, ended_at, peak_net_pct, avg_net_pct, duration_ms, tick_count)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
+            """;
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            for (OpportunitySession s : batch) {
+                ps.setString(1, s.id());
+                ps.setString(2, s.symbol());
+                ps.setString(3, s.longExchange());
+                ps.setString(4, s.shortExchange());
+                ps.setString(5, s.startedAt().toString());
+                ps.setString(6, s.endedAt().toString());
+                ps.setDouble(7, s.peakNetPct());
+                ps.setDouble(8, s.avgNetPct());
+                ps.setLong(9, s.durationMs());
+                ps.setInt(10, s.tickCount());
+                ps.addBatch();
+            }
+            ps.executeBatch();
+            connection.commit();
+            log.info("Closed {} opportunity sessions", batch.size());
+        } catch (SQLException e) {
+            log.error("Sessions flush failed: {}", e.getMessage());
             try { connection.rollback(); } catch (SQLException ignored) {}
         }
     }
@@ -157,6 +213,26 @@ public class OpportunityStore implements AutoCloseable {
                     null, null,
                     0.0,
                     java.time.Instant.parse(rs.getString(10))));
+            }
+        }
+        return result;
+    }
+
+    public synchronized List<OpportunitySession> queryRecentSessions(int limit) throws SQLException {
+        List<OpportunitySession> result = new ArrayList<>();
+        try (PreparedStatement ps = connection.prepareStatement(
+                "SELECT id, canonical_symbol, long_exchange, short_exchange, started_at, ended_at,"
+                + " peak_net_pct, avg_net_pct, duration_ms, tick_count"
+                + " FROM opportunity_sessions ORDER BY ended_at DESC LIMIT ?")) {
+            ps.setInt(1, limit);
+            ResultSet rs = ps.executeQuery();
+            while (rs.next()) {
+                result.add(new OpportunitySession(
+                    rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4),
+                    java.time.Instant.parse(rs.getString(5)),
+                    java.time.Instant.parse(rs.getString(6)),
+                    rs.getDouble(7), rs.getDouble(8),
+                    rs.getLong(9), rs.getInt(10)));
             }
         }
         return result;

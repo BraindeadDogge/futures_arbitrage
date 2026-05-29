@@ -124,6 +124,28 @@ public class OrderBook {
             .map(e -> new PriceLevel(e.getKey(), e.getValue())).toList();
     }
 
+    /** Total USD value of the top-n bid levels (best bids). */
+    public double bidDepthUsdt(int n) {
+        double sum = 0;
+        int i = 0;
+        for (Map.Entry<Double, Double> e : bids.entrySet()) {
+            if (i++ >= n) break;
+            sum += e.getKey() * e.getValue();
+        }
+        return sum;
+    }
+
+    /** Total USD value of the top-n ask levels (best asks). */
+    public double askDepthUsdt(int n) {
+        double sum = 0;
+        int i = 0;
+        for (Map.Entry<Double, Double> e : asks.entrySet()) {
+            if (i++ >= n) break;
+            sum += e.getKey() * e.getValue();
+        }
+        return sum;
+    }
+
     public boolean isStale(long thresholdMs) {
         return !initialized || lastUpdateTime.get().plusMillis(thresholdMs).isBefore(Instant.now());
     }
