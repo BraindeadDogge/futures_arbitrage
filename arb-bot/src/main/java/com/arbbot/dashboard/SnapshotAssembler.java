@@ -25,7 +25,7 @@ import org.slf4j.LoggerFactory;
 public class SnapshotAssembler {
 
   private static final Logger log = LoggerFactory.getLogger(SnapshotAssembler.class);
-  private static final int TOP_LEVELS = 5;
+  private static final int TOP_LEVELS = 10;
   private static final int RECENT_LIMIT = 20;
   private static final double HOLDING_HOURS = 4.0;
 
