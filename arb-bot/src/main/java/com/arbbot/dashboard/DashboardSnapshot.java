@@ -53,10 +53,15 @@ public record DashboardSnapshot(
       String symbol,
       String longExchange,
       double longAsk,
+      double longBestBid,
       String shortExchange,
       double shortBid,
+      double shortBestAsk,
       double grossPct,
       double netPct,
+      double maxVolumeUsdt,
+      double longAskDepthUsdt,
+      double shortBidDepthUsdt,
       long detectedAtMs) {}
 
   public record SessionDto(
@@ -68,6 +73,11 @@ public record DashboardSnapshot(
       long endedAtMs,
       double peakNetPct,
       double avgNetPct,
+      double minNetPct,
+      double entryNetPct,
+      double exitNetPct,
+      double peakVolumeUsdt,
+      double avgVolumeUsdt,
       long durationMs,
       int tickCount) {}
 

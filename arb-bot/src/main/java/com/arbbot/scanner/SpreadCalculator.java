@@ -1,7 +1,9 @@
 package com.arbbot.scanner;
 
 import com.arbbot.fees.FeeEngine;
+import com.arbbot.market.OrderBook;
 import com.arbbot.market.Tick;
+import java.util.OptionalDouble;
 
 public final class SpreadCalculator {
 
@@ -24,5 +26,27 @@ public final class SpreadCalculator {
             sellTick.canonicalSymbol(), sellTick.exchange(),
             holdingHours);
         return gross - cost;
+    }
+
+    /**
+     * Binary-searches for the largest USDT notional where
+     * (effectiveSell - effectiveBuy) / effectiveBuy > costFraction.
+     * Returns 0 if no profitable volume exists at any size.
+     */
+    public static double maxProfitableVolume(OrderBook longBook, OrderBook shortBook, double costFraction) {
+        OptionalDouble buy0 = longBook.effectiveBuyPrice(100);
+        OptionalDouble sell0 = shortBook.effectiveSellPrice(100);
+        if (buy0.isEmpty() || sell0.isEmpty()) return 0;
+        if ((sell0.getAsDouble() - buy0.getAsDouble()) / buy0.getAsDouble() <= costFraction) return 0;
+        double lo = 0, hi = 500_000;
+        for (int iter = 0; iter < 25; iter++) {
+            double mid = (lo + hi) / 2;
+            OptionalDouble buy = longBook.effectiveBuyPrice(mid);
+            OptionalDouble sell = shortBook.effectiveSellPrice(mid);
+            if (buy.isEmpty() || sell.isEmpty()) { hi = mid; continue; }
+            if ((sell.getAsDouble() - buy.getAsDouble()) / buy.getAsDouble() > costFraction) lo = mid;
+            else hi = mid;
+        }
+        return lo;
     }
 }

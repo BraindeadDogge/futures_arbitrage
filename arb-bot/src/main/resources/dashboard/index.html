@@ -567,24 +567,25 @@ function updateDbSessions(sessions) {
 // ── History render (DB-backed, persists across restarts) ───────────────────
 function renderHistory() {
   const wrap = document.getElementById('history-wrap');
-  // Merge DB sessions with in-flight JS history (not yet confirmed by DB)
   const dbList = [...dbSessions.values()]
     .sort((a, b) => b.endedAtMs - a.endedAtMs)
     .slice(0, 100);
   const dbIds = new Set(dbList.map(s => s.id));
-  // Include JS-local items not yet in DB (recently expired, flushed on next interval)
   const jsList = oppHistory.filter(h => !h.dbId || !dbIds.has(h.dbId));
 
   const all = [
     ...dbList.map(s => ({
       symbol: s.symbol, longEx: s.longExchange, shortEx: s.shortExchange,
-      peak: s.peakNetPct, avg: s.avgNetPct, duration: s.durationMs,
-      endedAt: s.endedAtMs, ticks: s.tickCount, fromDb: true
+      peak: s.peakNetPct, avg: s.avgNetPct, min: s.minNetPct,
+      entry: s.entryNetPct, exit: s.exitNetPct,
+      peakVol: s.peakVolumeUsdt, avgVol: s.avgVolumeUsdt,
+      duration: s.durationMs, endedAt: s.endedAtMs, ticks: s.tickCount, fromDb: true
     })),
     ...jsList.map(h => ({
       symbol: h.symbol, longEx: h.longEx, shortEx: h.shortEx,
-      peak: h.peak, avg: null, duration: h.duration,
-      endedAt: h.endedAt, ticks: null, fromDb: false
+      peak: h.peak, avg: null, min: null, entry: null, exit: null,
+      peakVol: null, avgVol: null,
+      duration: h.duration, endedAt: h.endedAt, ticks: null, fromDb: false
     }))
   ].sort((a, b) => b.endedAt - a.endedAt).slice(0, 100);
 
@@ -594,17 +595,31 @@ function renderHistory() {
   }
   let html = `<table class="opp-table">
     <thead><tr>
-      <th>SYMBOL</th><th>DIRECTION</th><th>PEAK%</th><th>AVG%</th><th>DURATION</th><th>TICKS</th><th>ENDED</th>
+      <th>SYMBOL</th><th>DIRECTION</th>
+      <th>ENTRY%</th><th>PEAK%</th><th>AVG%</th><th>MIN%</th><th>EXIT%</th>
+      <th>PEAK VOL</th><th>AVG VOL</th>
+      <th>DURATION</th><th>TICKS</th><th>ENDED</th>
     </tr></thead><tbody>`;
   for (const h of all) {
-    const peakCol = h.peak >= 0.15 ? 'var(--green)' : h.peak >= 0.05 ? 'var(--yellow)' : 'var(--dim)';
-    const avgStr  = h.avg != null ? h.avg.toFixed(3) + '%' : '—';
-    const ticks   = h.ticks != null ? h.ticks.toLocaleString() : '—';
+    const peakCol  = h.peak >= 0.15 ? 'var(--green)' : h.peak >= 0.05 ? 'var(--yellow)' : 'var(--dim)';
+    const entryStr = h.entry != null ? h.entry.toFixed(3) + '%' : '—';
+    const avgStr   = h.avg   != null ? h.avg.toFixed(3) + '%' : '—';
+    const minStr   = h.min   != null ? h.min.toFixed(3) + '%' : '—';
+    const exitStr  = h.exit  != null ? h.exit.toFixed(3) + '%' : '—';
+    const ticks    = h.ticks != null ? h.ticks.toLocaleString() : '—';
+    const peakVol  = h.peakVol != null && h.peakVol > 0 ? fmtUsdt(h.peakVol) : '—';
+    const avgVol   = h.avgVol  != null && h.avgVol  > 0 ? fmtUsdt(h.avgVol)  : '—';
+    const peakVolCls = h.peakVol >= 50000 ? 'color:var(--green)' : h.peakVol >= 10000 ? 'color:var(--yellow)' : 'color:var(--dim)';
     html += `<tr>
       <td class="opp-sym">${h.symbol}</td>
       <td class="opp-pair">${h.longEx} <span style="color:var(--dim)">→</span> ${h.shortEx}</td>
+      <td style="color:var(--dim)">${entryStr}</td>
       <td style="color:${peakCol};font-weight:bold">${h.peak.toFixed(3)}%</td>
       <td style="color:var(--dim)">${avgStr}</td>
+      <td style="color:var(--dim)">${minStr}</td>
+      <td style="color:var(--dim)">${exitStr}</td>
+      <td style="${peakVolCls}">${peakVol}</td>
+      <td style="color:var(--dim)">${avgVol}</td>
       <td style="color:var(--dim)">${fmtDuration(h.duration)}</td>
       <td style="color:var(--dim)">${ticks}</td>
       <td style="color:var(--dim)" data-endedat="${h.endedAt}">${fmtAgo(Date.now() - h.endedAt)}</td>

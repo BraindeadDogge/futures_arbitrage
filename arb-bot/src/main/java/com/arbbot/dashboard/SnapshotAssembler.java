@@ -20,7 +20,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.OptionalDouble;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -30,7 +29,6 @@ public class SnapshotAssembler {
   private static final int TOP_LEVELS = 10;
   private static final int RECENT_LIMIT = 20;
   private static final double HOLDING_HOURS = 4.0;
-  private static final double MAX_VOLUME_CAP_USDT = 500_000;
 
   private final OrderBookManager obManager;
   private final SymbolRegistry symbolRegistry;
@@ -148,10 +146,15 @@ public class SnapshotAssembler {
                 o.canonicalSymbol(),
                 o.longExchange(),
                 o.longExchangeAskPrice(),
+                o.longExchangeBestBid(),
                 o.shortExchange(),
                 o.shortExchangeBidPrice(),
+                o.shortExchangeBestAsk(),
                 o.grossSpreadPct(),
                 o.netSpreadPct(),
+                o.maxVolumeUsdt(),
+                o.longAskDepthUsdt(),
+                o.shortBidDepthUsdt(),
                 o.detectedAt().toEpochMilli()));
       }
     } catch (Exception e) {
@@ -165,7 +168,10 @@ public class SnapshotAssembler {
         recentSessions.add(new SessionDto(
             s.id(), s.symbol(), s.longExchange(), s.shortExchange(),
             s.startedAt().toEpochMilli(), s.endedAt().toEpochMilli(),
-            s.peakNetPct(), s.avgNetPct(), s.durationMs(), s.tickCount()));
+            s.peakNetPct(), s.avgNetPct(), s.minNetPct(),
+            s.entryNetPct(), s.exitNetPct(),
+            s.peakVolumeUsdt(), s.avgVolumeUsdt(),
+            s.durationMs(), s.tickCount()));
       }
     } catch (Exception e) {
       log.debug("queryRecentSessions failed: {}", e.getMessage());
@@ -199,32 +205,8 @@ public class SnapshotAssembler {
     double cost = feeEngine.getTotalRoundTripCost(symbol, buy.exchange(), symbol, sell.exchange(), HOLDING_HOURS);
     OrderBook longBook  = obManager.getOrCreateBook(buy.exchange(),  exSymbols.getOrDefault(buy.exchange(),  ""));
     OrderBook shortBook = obManager.getOrCreateBook(sell.exchange(), exSymbols.getOrDefault(sell.exchange(), ""));
-    double maxVol = maxProfitableVolume(longBook, shortBook, cost);
+    double maxVol = SpreadCalculator.maxProfitableVolume(longBook, shortBook, cost);
     out.add(new SpreadRow(symbol, buy.exchange(), sell.exchange(), gross * 100, net * 100, viable, maxVol));
-  }
-
-  /**
-   * Binary-searches for the largest notional (USDT) where
-   * (effectiveSell - effectiveBuy) / effectiveBuy > costFraction.
-   * Returns 0 if no profitable volume is available.
-   */
-  private static double maxProfitableVolume(OrderBook longBook, OrderBook shortBook, double costFraction) {
-    double lo = 0, hi = MAX_VOLUME_CAP_USDT;
-    // Quick check: is there any profitable volume at all?
-    OptionalDouble buy0 = longBook.effectiveBuyPrice(100);
-    OptionalDouble sell0 = shortBook.effectiveSellPrice(100);
-    if (buy0.isEmpty() || sell0.isEmpty()) return 0;
-    if ((sell0.getAsDouble() - buy0.getAsDouble()) / buy0.getAsDouble() <= costFraction) return 0;
-
-    for (int iter = 0; iter < 25; iter++) {
-      double mid = (lo + hi) / 2;
-      OptionalDouble buy = longBook.effectiveBuyPrice(mid);
-      OptionalDouble sell = shortBook.effectiveSellPrice(mid);
-      if (buy.isEmpty() || sell.isEmpty()) { hi = mid; continue; }
-      double spread = (sell.getAsDouble() - buy.getAsDouble()) / buy.getAsDouble();
-      if (spread > costFraction) lo = mid; else hi = mid;
-    }
-    return lo;
   }
 
   private static List<double[]> toArray(List<PriceLevel> levels) {

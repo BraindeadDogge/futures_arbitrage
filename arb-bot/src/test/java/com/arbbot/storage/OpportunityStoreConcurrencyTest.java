@@ -41,10 +41,10 @@ class OpportunityStoreConcurrencyTest {
                 try {
                     latch.await();
                     for (int i = 0; i < perThread; i++) {
-                        store.save(new Opportunity(UUID.randomUUID(), "BTC", "binance", 50000,
-                            "bybit", 50200, 0.004, 0.002, 0.002,
+                        store.save(new Opportunity(UUID.randomUUID(), "BTC", "binance", 50000, 49900,
+                            "bybit", 50200, 50300, 0.004, 0.002, 0.002,
                             FundingRate.zero("binance", "BTC"), FundingRate.zero("bybit", "BTC"),
-                            1000.0, Instant.now()));
+                            1000.0, 5000.0, 200_000.0, 150_000.0, Instant.now()));
                     }
                 } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
             }));

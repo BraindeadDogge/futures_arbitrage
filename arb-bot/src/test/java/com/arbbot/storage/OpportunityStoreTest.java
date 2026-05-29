@@ -28,10 +28,10 @@ class OpportunityStoreTest {
     }
 
     private Opportunity opp(String symbol, String longEx, String shortEx, double net) {
-        return new Opportunity(UUID.randomUUID(), symbol, longEx, 50000.0, shortEx, 50200.0,
+        return new Opportunity(UUID.randomUUID(), symbol, longEx, 50000.0, 49900.0, shortEx, 50200.0, 50300.0,
             0.004, net, 0.002,
             FundingRate.zero(longEx, symbol), FundingRate.zero(shortEx, symbol),
-            1000.0, Instant.now());
+            1000.0, 5000.0, 200_000.0, 150_000.0, Instant.now());
     }
 
     @Test
