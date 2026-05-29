@@ -24,6 +24,7 @@ public abstract class BaseWsClient extends WebSocketListener implements Exchange
     private volatile WebSocket webSocket;
     private final AtomicBoolean connected         = new AtomicBoolean(false);
     private final AtomicBoolean shouldReconnect   = new AtomicBoolean(true);
+    private final AtomicBoolean reconnectPending  = new AtomicBoolean(false);
     private final AtomicInteger reconnectAttempts = new AtomicInteger(0);
     private final AtomicLong    lastMessageAt     = new AtomicLong(0);
     private volatile Thread     watchdogThread;
@@ -98,6 +99,8 @@ public abstract class BaseWsClient extends WebSocketListener implements Exchange
         log.info("[{}] WebSocket connected", exchangeName);
         connected.set(true);
         reconnectAttempts.set(0);
+        reconnectPending.set(false);
+        lastMessageAt.set(System.currentTimeMillis());
         onConnected(ws);
     }
 
@@ -116,6 +119,7 @@ public abstract class BaseWsClient extends WebSocketListener implements Exchange
     public final void onClosing(WebSocket ws, int code, String reason) {
         log.warn("[{}] WebSocket closing: {} {}", exchangeName, code, reason);
         connected.set(false);
+        scheduleReconnect(); // don't wait for onClosed which can take minutes
     }
 
     @Override
@@ -134,6 +138,7 @@ public abstract class BaseWsClient extends WebSocketListener implements Exchange
 
     private void scheduleReconnect() {
         if (!shouldReconnect.get()) return;
+        if (!reconnectPending.compareAndSet(false, true)) return; // already scheduled
         int attempt = reconnectAttempts.incrementAndGet();
         long backoff = Math.min(100L * (1L << Math.min(attempt - 1, 8)), MAX_BACKOFF_MS);
         log.info("[{}] Reconnecting in {}ms (attempt {})", exchangeName, backoff, attempt);

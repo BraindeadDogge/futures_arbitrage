@@ -62,7 +62,6 @@ public class BinanceWsClient extends BaseWsClient {
             snapshotInProgress.computeIfAbsent(symbol, k -> new AtomicBoolean(false)).set(true);
             fetchSnapshot(symbol);
         });
-        schedulePing();
     }
 
     @Override
@@ -146,19 +145,6 @@ public class BinanceWsClient extends BaseWsClient {
     /** Visible-for-testing hook */
     void fetchSnapshotForTest(String symbol) {
         fetchSnapshot(symbol);
-    }
-
-    private void schedulePing() {
-        Thread.ofVirtual().name("binance-ping").start(() -> {
-            try {
-                while (isConnected()) {
-                    Thread.sleep(180_000);
-                    send("{\"method\":\"ping\"}");
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        });
     }
 
     private List<OrderBook.PriceLevel> parseLevels(JsonNode array) {
