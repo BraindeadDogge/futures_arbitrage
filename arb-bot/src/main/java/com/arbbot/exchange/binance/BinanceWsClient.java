@@ -12,6 +12,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class BinanceWsClient extends BaseWsClient {
 
@@ -23,7 +25,9 @@ public class BinanceWsClient extends BaseWsClient {
     private final List<String> symbols;
     private final OrderBookManager orderBookManager;
     private final HealthMonitor healthMonitor;
-    private final Map<String, List<JsonNode>> pendingDeltas = new ConcurrentHashMap<>();
+    private final Map<String, CopyOnWriteArrayList<JsonNode>> pendingDeltas = new ConcurrentHashMap<>();
+    private final Map<String, AtomicBoolean> snapshotInProgress = new ConcurrentHashMap<>();
+    private final Map<String, Long> lastAppliedU = new ConcurrentHashMap<>();
 
     public BinanceWsClient(String wsBaseUrl, String restBaseUrl, List<String> symbols,
                             OrderBookManager manager, HealthMonitor healthMonitor,
@@ -47,7 +51,8 @@ public class BinanceWsClient extends BaseWsClient {
     @Override
     protected void onConnected(WebSocket ws) {
         symbols.forEach(symbol -> {
-            pendingDeltas.put(symbol, new ArrayList<>());
+            pendingDeltas.put(symbol, new CopyOnWriteArrayList<>());
+            snapshotInProgress.computeIfAbsent(symbol, k -> new AtomicBoolean(false)).set(true);
             fetchSnapshot(symbol);
         });
         schedulePing();
@@ -63,25 +68,21 @@ public class BinanceWsClient extends BaseWsClient {
             if (!"depthUpdate".equals(data.path("e").asText())) return;
 
             String symbol = data.path("s").asText();
-            long U = data.path("U").asLong();
             long u = data.path("u").asLong();
             List<OrderBook.PriceLevel> bids = parseLevels(data.path("b"));
             List<OrderBook.PriceLevel> asks = parseLevels(data.path("a"));
             OrderBook book = orderBookManager.getOrCreateBook("binance", symbol);
 
-            if (!book.isInitialized()) {
-                pendingDeltas.computeIfAbsent(symbol, k -> new ArrayList<>()).add(data);
+            AtomicBoolean inProgress = snapshotInProgress.computeIfAbsent(symbol, k -> new AtomicBoolean(false));
+            if (!book.isInitialized() || inProgress.get()) {
+                pendingDeltas.computeIfAbsent(symbol, k -> new CopyOnWriteArrayList<>()).add(data);
                 return;
             }
-            long lastSeq = book.getLastSeqNum();
-            if (u < lastSeq + 1) return;
-            if (U > lastSeq + 1) {
-                log.warn("[binance] Sequence gap for {}: U={} > lastSeq+1={}", symbol, U, lastSeq + 1);
-                pendingDeltas.put(symbol, new ArrayList<>());
-                fetchSnapshot(symbol);
-                return;
-            }
+            // Binance FAPI depth stream sends absolute quantities per price level,
+            // so skipping a sequence gap only causes transient staleness — no re-fetch needed.
+            if (u <= lastAppliedU.getOrDefault(symbol, 0L)) return;
             book.applyDelta(bids, asks, -1L);
+            lastAppliedU.put(symbol, u);
             healthMonitor.recordWsTick("binance");
         } catch (Exception e) {
             log.error("[binance] Message parse error: {}", e.getMessage());
@@ -92,32 +93,45 @@ public class BinanceWsClient extends BaseWsClient {
         Thread.ofVirtual().name("binance-snapshot-" + symbol).start(() -> {
             try {
                 okhttp3.Request req = new okhttp3.Request.Builder()
-                    .url(restBaseUrl + "/fapi/v1/depth?symbol=" + symbol + "&limit=200")
+                    .url(restBaseUrl + "/fapi/v1/depth?symbol=" + symbol + "&limit=100")
                     .get().build();
                 try (okhttp3.Response resp = httpClient.newCall(req).execute()) {
-                    JsonNode root = mapper.readTree(resp.body().string());
+                    String body = resp.body().string();
+                    if (!resp.isSuccessful()) {
+                        log.error("[binance] Snapshot HTTP {} for {}: {}", resp.code(), symbol, body);
+                        snapshotInProgress.getOrDefault(symbol, new AtomicBoolean()).set(false);
+                        return;
+                    }
+                    JsonNode root = mapper.readTree(body);
                     long lastUpdateId = root.path("lastUpdateId").asLong();
+                    if (lastUpdateId == 0) {
+                        log.error("[binance] lastUpdateId=0 for {}, body: {}", symbol, body);
+                        snapshotInProgress.getOrDefault(symbol, new AtomicBoolean()).set(false);
+                        return;
+                    }
                     Map<Double, Double> bids = parseLevelsToMap(root.path("bids"));
                     Map<Double, Double> asks = parseLevelsToMap(root.path("asks"));
                     OrderBook book = orderBookManager.getOrCreateBook("binance", symbol);
                     book.applySnapshot(bids, asks, lastUpdateId);
+                    lastAppliedU.put(symbol, lastUpdateId);
 
-                    List<JsonNode> buffered = pendingDeltas.getOrDefault(symbol, List.of());
-                    for (JsonNode delta : buffered) {
-                        long dU = delta.path("U").asLong();
-                        long du = delta.path("u").asLong();
-                        if (du < lastUpdateId + 1) continue;
-                        if (dU > lastUpdateId + 1) {
-                            log.warn("[binance] Gap in buffered deltas for {}: dU={} > lastUpdateId+1={}", symbol, dU, lastUpdateId + 1);
-                            break;
+                    // Swap buffer atomically; CopyOnWriteArrayList makes concurrent adds safe.
+                    List<JsonNode> buffered = pendingDeltas.put(symbol, new CopyOnWriteArrayList<>());
+                    if (buffered != null) {
+                        for (JsonNode delta : buffered) {
+                            long du = delta.path("u").asLong();
+                            if (du <= lastUpdateId) continue;
+                            book.applyDelta(parseLevels(delta.path("b")), parseLevels(delta.path("a")), -1L);
+                            lastAppliedU.put(symbol, du);
+                            lastUpdateId = du;
                         }
-                        book.applyDelta(parseLevels(delta.path("b")), parseLevels(delta.path("a")), -1L);
                     }
-                    pendingDeltas.remove(symbol);
+                    snapshotInProgress.getOrDefault(symbol, new AtomicBoolean()).set(false);
                     log.info("[binance] Snapshot applied for {}, lastUpdateId={}", symbol, lastUpdateId);
                 }
             } catch (Exception e) {
                 log.error("[binance] Snapshot fetch failed for {}: {}", symbol, e.getMessage());
+                snapshotInProgress.getOrDefault(symbol, new AtomicBoolean()).set(false);
             }
         });
     }

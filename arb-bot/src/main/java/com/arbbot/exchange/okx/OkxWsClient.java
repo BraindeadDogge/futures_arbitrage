@@ -11,6 +11,7 @@ import okhttp3.WebSocket;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class OkxWsClient extends BaseWsClient {
 
@@ -21,6 +22,8 @@ public class OkxWsClient extends BaseWsClient {
     private final Map<String, String> canonicalToOkx; // canonical -> instId e.g. BTC-USDT-SWAP
     private final OrderBookManager orderBookManager;
     private final HealthMonitor healthMonitor;
+    private final Map<String, Long> snapshotSeq = new ConcurrentHashMap<>();
+    private final Map<String, List<JsonNode>> pendingDeltas = new ConcurrentHashMap<>();
 
     public OkxWsClient(String wsBaseUrl, Map<String, String> canonicalToOkx,
                         OrderBookManager manager, HealthMonitor healthMonitor,
@@ -37,9 +40,9 @@ public class OkxWsClient extends BaseWsClient {
 
     @Override
     protected void onConnected(WebSocket ws) {
-        // Build subscribe args for all instruments
         StringBuilder args = new StringBuilder();
         for (String instId : canonicalToOkx.values()) {
+            pendingDeltas.put(instId, new ArrayList<>());
             if (args.length() > 0) args.append(",");
             args.append("{\"channel\":\"books\",\"instId\":\"").append(instId).append("\"}");
         }
@@ -68,15 +71,23 @@ public class OkxWsClient extends BaseWsClient {
                 Map<Double, Double> bids = parseLevelsToMap(data.path("bids"));
                 Map<Double, Double> asks = parseLevelsToMap(data.path("asks"));
                 book.applySnapshot(bids, asks, seqId);
-                log.info("[okx] Snapshot applied for {}", instId);
-            } else if ("update".equals(action)) {
-                List<OrderBook.PriceLevel> bids = parseLevels(data.path("bids"));
-                List<OrderBook.PriceLevel> asks = parseLevels(data.path("asks"));
-                if (!book.applyDelta(bids, asks, seqId)) {
-                    log.warn("[okx] Sequence gap for {}, re-subscribing", instId);
-                    send("{\"op\":\"unsubscribe\",\"args\":[{\"channel\":\"books\",\"instId\":\"" + instId + "\"}]}");
-                    send("{\"op\":\"subscribe\",\"args\":[{\"channel\":\"books\",\"instId\":\"" + instId + "\"}]}");
+                snapshotSeq.put(instId, seqId);
+                List<JsonNode> buffered = pendingDeltas.getOrDefault(instId, List.of());
+                for (JsonNode delta : buffered) {
+                    long dSeq = delta.path("seqId").asLong();
+                    if (dSeq <= seqId) continue;
+                    book.applyDelta(parseLevels(delta.path("bids")), parseLevels(delta.path("asks")), -1L);
                 }
+                pendingDeltas.remove(instId);
+                log.info("[okx] Snapshot applied for {}, seqId={}", instId, seqId);
+            } else if ("update".equals(action)) {
+                if (!book.isInitialized()) {
+                    pendingDeltas.computeIfAbsent(instId, k -> new ArrayList<>()).add(data);
+                    return;
+                }
+                Long snapSeq = snapshotSeq.get(instId);
+                if (snapSeq != null && seqId <= snapSeq) return;
+                book.applyDelta(parseLevels(data.path("bids")), parseLevels(data.path("asks")), -1L);
             }
             healthMonitor.recordWsTick("okx");
         } catch (Exception e) {

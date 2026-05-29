@@ -66,6 +66,6 @@ class BinanceWsClientTest {
         var request = mockServer.takeRequest();
         assertTrue(request.getPath().contains("/fapi/v1/depth"));
         assertTrue(request.getPath().contains("symbol=BTCUSDT"));
-        assertTrue(request.getPath().contains("limit=200"));
+        assertTrue(request.getPath().contains("limit=100"));
     }
 }

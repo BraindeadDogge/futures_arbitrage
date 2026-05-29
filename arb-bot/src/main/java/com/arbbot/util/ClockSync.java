@@ -39,7 +39,8 @@ public class ClockSync {
                 long after = System.currentTimeMillis();
                 long rtt = after - before;
                 JsonNode root = mapper.readTree(resp.body().string());
-                long serverTime = root.path(fieldPath).asLong();
+                JsonNode node = fieldPath.startsWith("/") ? root.at(fieldPath) : root.path(fieldPath);
+                long serverTime = node.asLong();
                 // Estimate: serverTime is sampled at before + rtt/2
                 long offset = serverTime - (before + rtt / 2);
                 offsets.put(exchange, offset);

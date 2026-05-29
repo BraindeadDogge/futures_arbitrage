@@ -10,6 +10,9 @@ import okhttp3.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class KuCoinWsClient extends BaseWsClient {
@@ -18,13 +21,16 @@ public class KuCoinWsClient extends BaseWsClient {
     private static final ObjectMapper mapper = new ObjectMapper();
 
     private final String restBaseUrl;
-    private final List<String> symbols; // KuCoin format: BTCUSDTM
-    private final Map<String, String> canonicalToKucoin; // canonical -> kucoin symbol
+    private final List<String> symbols;
+    private final Map<String, String> canonicalToKucoin;
     private final OrderBookManager orderBookManager;
     private final HealthMonitor healthMonitor;
     private volatile String wsEndpoint = "";
     private volatile long pingIntervalMs = 18_000;
     private final AtomicLong msgId = new AtomicLong(1);
+    private final Map<String, CopyOnWriteArrayList<JsonNode>> pendingDeltas = new ConcurrentHashMap<>();
+    private final Map<String, AtomicBoolean> snapshotInProgress = new ConcurrentHashMap<>();
+    private final Map<String, Long> lastAppliedSeq = new ConcurrentHashMap<>();
 
     public KuCoinWsClient(String restBaseUrl, Map<String, String> canonicalToKucoin,
                           OrderBookManager manager, HealthMonitor healthMonitor,
@@ -39,7 +45,6 @@ public class KuCoinWsClient extends BaseWsClient {
 
     @Override
     protected String wsUrl() {
-        // Fetch WS token first, then return connect URL
         try {
             Request req = new Request.Builder()
                 .url(restBaseUrl + "/api/v1/bullet-public")
@@ -55,17 +60,19 @@ public class KuCoinWsClient extends BaseWsClient {
             }
         } catch (Exception e) {
             log.error("[kucoin] Failed to get WS token: {}", e.getMessage());
-            return "ws://invalid"; // will fail and trigger reconnect
+            return "ws://invalid";
         }
     }
 
     @Override
     protected void onConnected(WebSocket ws) {
-        // Subscribe to all symbols
         for (String sym : symbols) {
+            pendingDeltas.put(sym, new CopyOnWriteArrayList<>());
+            snapshotInProgress.computeIfAbsent(sym, k -> new AtomicBoolean(false)).set(true);
             String id = String.valueOf(msgId.getAndIncrement());
             send("{\"id\":\"" + id + "\",\"type\":\"subscribe\",\"topic\":\"/contractMarket/level2:" + sym
                 + "\",\"privateChannel\":false,\"response\":true}");
+            fetchSnapshot(sym);
         }
         schedulePing();
     }
@@ -85,57 +92,104 @@ public class KuCoinWsClient extends BaseWsClient {
             JsonNode data = root.path("data");
             long seq = data.path("sequence").asLong();
 
-            // KuCoin sends incremental changes as "change" field: "price,side,qty|..."
             String changeStr = data.path("change").asText("");
-            if (!changeStr.isEmpty()) {
-                List<OrderBook.PriceLevel> bids = new ArrayList<>();
-                List<OrderBook.PriceLevel> asks = new ArrayList<>();
-                for (String entry : changeStr.split("\\|")) {
-                    String[] parts = entry.split(",");
-                    if (parts.length < 3) continue;
-                    double price = Double.parseDouble(parts[0]);
-                    String side = parts[1];
-                    double qty = Double.parseDouble(parts[2]);
-                    if ("buy".equals(side)) bids.add(new OrderBook.PriceLevel(price, qty));
-                    else asks.add(new OrderBook.PriceLevel(price, qty));
-                }
-                OrderBook book = orderBookManager.getOrCreateBook("kucoin", kucoinSymbol);
-                if (!book.isInitialized()) {
-                    log.warn("[kucoin] Book not initialized for {}, re-subscribing to trigger snapshot", kucoinSymbol);
-                    String uid = String.valueOf(msgId.getAndIncrement());
-                    send("{\"id\":\"" + uid + "\",\"type\":\"unsubscribe\",\"topic\":\"/contractMarket/level2:"
-                        + kucoinSymbol + "\"}");
-                    String uid2 = String.valueOf(msgId.getAndIncrement());
-                    send("{\"id\":\"" + uid2 + "\",\"type\":\"subscribe\",\"topic\":\"/contractMarket/level2:"
-                        + kucoinSymbol + "\",\"privateChannel\":false,\"response\":true}");
-                    return;
-                }
-                if (!book.applyDelta(bids, asks, seq)) {
-                    log.warn("[kucoin] Sequence gap for {}, re-subscribing", kucoinSymbol);
-                    String id = String.valueOf(msgId.getAndIncrement());
-                    send("{\"id\":\"" + id + "\",\"type\":\"unsubscribe\",\"topic\":\"/contractMarket/level2:"
-                        + kucoinSymbol + "\"}");
-                    String id2 = String.valueOf(msgId.getAndIncrement());
-                    send("{\"id\":\"" + id2 + "\",\"type\":\"subscribe\",\"topic\":\"/contractMarket/level2:"
-                        + kucoinSymbol + "\",\"privateChannel\":false,\"response\":true}");
-                }
-                healthMonitor.recordWsTick("kucoin");
-            }
+            if (changeStr.isEmpty()) return;
 
-            // KuCoin may also send snapshot-style messages with bids/asks arrays
-            JsonNode bidsNode = data.path("bids");
-            JsonNode asksNode = data.path("asks");
-            if (!bidsNode.isMissingNode() && !asksNode.isMissingNode()) {
-                Map<Double, Double> bids = new HashMap<>();
-                Map<Double, Double> asks = new HashMap<>();
-                for (JsonNode b : bidsNode) bids.put(b.get(0).asDouble(), b.get(1).asDouble());
-                for (JsonNode a : asksNode) asks.put(a.get(0).asDouble(), a.get(1).asDouble());
-                orderBookManager.getOrCreateBook("kucoin", kucoinSymbol).applySnapshot(bids, asks, seq);
-                healthMonitor.recordWsTick("kucoin");
+            OrderBook book = orderBookManager.getOrCreateBook("kucoin", kucoinSymbol);
+            AtomicBoolean inProgress = snapshotInProgress.computeIfAbsent(kucoinSymbol, k -> new AtomicBoolean(false));
+
+            if (!book.isInitialized() || inProgress.get()) {
+                pendingDeltas.computeIfAbsent(kucoinSymbol, k -> new CopyOnWriteArrayList<>()).add(data);
+                return;
             }
+            // KuCoin futures depth stream sends absolute quantities per price level,
+            // so skipping a sequence gap only causes transient staleness — no re-fetch needed.
+            if (seq <= lastAppliedSeq.getOrDefault(kucoinSymbol, 0L)) return;
+            List<OrderBook.PriceLevel> bids = new ArrayList<>(), asks = new ArrayList<>();
+            parseChange(changeStr, bids, asks);
+            book.applyDelta(bids, asks, -1L);
+            lastAppliedSeq.put(kucoinSymbol, seq);
+            healthMonitor.recordWsTick("kucoin");
         } catch (Exception e) {
             log.error("[kucoin] Message parse error: {}", e.getMessage());
         }
+    }
+
+    private void fetchSnapshot(String kucoinSymbol) {
+        Thread.ofVirtual().name("kucoin-snapshot-" + kucoinSymbol).start(() -> {
+            try {
+                Request req = new Request.Builder()
+                    .url(restBaseUrl + "/api/v1/level2/snapshot?symbol=" + kucoinSymbol)
+                    .get().build();
+                try (Response resp = httpClient.newCall(req).execute()) {
+                    String body = resp.body().string();
+                    if (!resp.isSuccessful()) {
+                        log.error("[kucoin] Snapshot HTTP {} for {}: {}", resp.code(), kucoinSymbol, body);
+                        snapshotInProgress.getOrDefault(kucoinSymbol, new AtomicBoolean()).set(false);
+                        return;
+                    }
+                    JsonNode root = mapper.readTree(body);
+                    JsonNode data = root.path("data");
+                    if (data.isMissingNode()) {
+                        log.error("[kucoin] No data field in snapshot for {}, body: {}", kucoinSymbol, body);
+                        snapshotInProgress.getOrDefault(kucoinSymbol, new AtomicBoolean()).set(false);
+                        return;
+                    }
+                    long seq = data.path("sequence").asLong();
+                    if (seq == 0) {
+                        log.error("[kucoin] sequence=0 for {}, body: {}", kucoinSymbol, body);
+                        snapshotInProgress.getOrDefault(kucoinSymbol, new AtomicBoolean()).set(false);
+                        return;
+                    }
+                    Map<Double, Double> bids = parseLevelsToMap(data.path("bids"));
+                    Map<Double, Double> asks = parseLevelsToMap(data.path("asks"));
+                    OrderBook book = orderBookManager.getOrCreateBook("kucoin", kucoinSymbol);
+                    book.applySnapshot(bids, asks, seq);
+                    lastAppliedSeq.put(kucoinSymbol, seq);
+
+                    // Swap buffer atomically; CopyOnWriteArrayList makes concurrent adds safe.
+                    List<JsonNode> buffered = pendingDeltas.put(kucoinSymbol, new CopyOnWriteArrayList<>());
+                    if (buffered != null) {
+                        for (JsonNode delta : buffered) {
+                            long dSeq = delta.path("sequence").asLong();
+                            if (dSeq <= seq) continue;
+                            List<OrderBook.PriceLevel> dbids = new ArrayList<>(), dasks = new ArrayList<>();
+                            parseChange(delta.path("change").asText(""), dbids, dasks);
+                            book.applyDelta(dbids, dasks, -1L);
+                            lastAppliedSeq.put(kucoinSymbol, dSeq);
+                            seq = dSeq;
+                        }
+                    }
+                    snapshotInProgress.getOrDefault(kucoinSymbol, new AtomicBoolean()).set(false);
+                    log.info("[kucoin] Snapshot applied for {}, seq={}", kucoinSymbol, seq);
+                }
+            } catch (Exception e) {
+                log.error("[kucoin] Snapshot fetch failed for {}: {}", kucoinSymbol, e.getMessage());
+                snapshotInProgress.getOrDefault(kucoinSymbol, new AtomicBoolean()).set(false);
+            }
+        });
+    }
+
+    private static void parseChange(String changeStr,
+                                    List<OrderBook.PriceLevel> bids, List<OrderBook.PriceLevel> asks) {
+        if (changeStr.isEmpty()) return;
+        for (String entry : changeStr.split("\\|")) {
+            String[] parts = entry.split(",");
+            if (parts.length < 3) continue;
+            double price = Double.parseDouble(parts[0]);
+            String side = parts[1];
+            double qty = Double.parseDouble(parts[2]);
+            if ("buy".equals(side)) bids.add(new OrderBook.PriceLevel(price, qty));
+            else asks.add(new OrderBook.PriceLevel(price, qty));
+        }
+    }
+
+    private Map<Double, Double> parseLevelsToMap(JsonNode array) {
+        Map<Double, Double> map = new HashMap<>();
+        for (JsonNode entry : array) {
+            map.put(Double.parseDouble(entry.get(0).asText()), Double.parseDouble(entry.get(1).asText()));
+        }
+        return map;
     }
 
     private void schedulePing() {

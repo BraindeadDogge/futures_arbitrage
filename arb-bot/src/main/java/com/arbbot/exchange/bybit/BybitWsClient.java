@@ -11,6 +11,7 @@ import okhttp3.WebSocket;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class BybitWsClient extends BaseWsClient {
 
@@ -21,6 +22,8 @@ public class BybitWsClient extends BaseWsClient {
     private final List<String> symbols;
     private final OrderBookManager orderBookManager;
     private final HealthMonitor healthMonitor;
+    private final Map<String, Long> snapshotSeq = new ConcurrentHashMap<>();
+    private final Map<String, List<JsonNode>> pendingDeltas = new ConcurrentHashMap<>();
 
     public BybitWsClient(String wsBaseUrl, List<String> symbols,
                           OrderBookManager manager, HealthMonitor healthMonitor,
@@ -38,6 +41,7 @@ public class BybitWsClient extends BaseWsClient {
     @Override
     protected void onConnected(WebSocket ws) {
         for (String symbol : symbols) {
+            pendingDeltas.put(symbol, new ArrayList<>());
             send("{\"op\":\"subscribe\",\"args\":[\"orderbook.50." + symbol + "\"]}");
         }
         schedulePing();
@@ -61,15 +65,26 @@ public class BybitWsClient extends BaseWsClient {
                 Map<Double, Double> bids = parseLevelsToMap(data.path("b"));
                 Map<Double, Double> asks = parseLevelsToMap(data.path("a"));
                 book.applySnapshot(bids, asks, seq);
-                log.info("[bybit] Snapshot applied for {}", symbol);
-            } else if ("delta".equals(type)) {
-                List<OrderBook.PriceLevel> bids = parseLevels(data.path("b"));
-                List<OrderBook.PriceLevel> asks = parseLevels(data.path("a"));
-                if (!book.applyDelta(bids, asks, seq)) {
-                    log.warn("[bybit] Sequence gap for {} at seq={}, re-subscribing", symbol, seq);
-                    send("{\"op\":\"unsubscribe\",\"args\":[\"orderbook.50." + symbol + "\"]}");
-                    send("{\"op\":\"subscribe\",\"args\":[\"orderbook.50." + symbol + "\"]}");
+                snapshotSeq.put(symbol, seq);
+
+                List<JsonNode> buffered = pendingDeltas.getOrDefault(symbol, List.of());
+                for (JsonNode delta : buffered) {
+                    long dSeq = delta.path("seq").asLong();
+                    if (dSeq <= seq) continue;
+                    book.applyDelta(parseLevels(delta.path("b")), parseLevels(delta.path("a")), -1L);
                 }
+                pendingDeltas.remove(symbol);
+                log.info("[bybit] Snapshot applied for {}, seq={}", symbol, seq);
+            } else if ("delta".equals(type)) {
+                if (!book.isInitialized()) {
+                    pendingDeltas.computeIfAbsent(symbol, k -> new ArrayList<>()).add(data);
+                    return;
+                }
+                Long snapSeq = snapshotSeq.get(symbol);
+                if (snapSeq != null && seq <= snapSeq) {
+                    return;
+                }
+                book.applyDelta(parseLevels(data.path("b")), parseLevels(data.path("a")), -1L);
             }
             healthMonitor.recordWsTick("bybit");
         } catch (Exception e) {
