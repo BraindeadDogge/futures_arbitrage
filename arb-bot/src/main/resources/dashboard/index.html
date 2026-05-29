@@ -18,6 +18,7 @@
     --blue:  #3498db;
     --teal:  #00b8d9;
     --green-bg:    rgba(14,203,129,0.07);
+    --expired-bg:  rgba(132,142,156,0.07);
     --red-depth:   rgba(246,70,93,0.14);
     --green-depth: rgba(14,203,129,0.14);
   }
@@ -79,9 +80,9 @@
   .health-card.warn { border-left: 3px solid var(--yellow); }
   .health-card.bad  { border-left: 3px solid var(--red); }
   .h-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-  .h-name { font-weight: bold; font-size: 11px; }
+  .h-name   { font-weight: bold; font-size: 11px; }
   .h-status { font-size: 10px; color: var(--dim); margin-top: 1px; }
-  .h-meta { margin-left: auto; font-size: 10px; color: var(--dim); text-align: right; line-height: 1.5; }
+  .h-meta   { margin-left: auto; font-size: 10px; color: var(--dim); text-align: right; line-height: 1.5; }
 
   /* ── Spreads + Funding ─────────────────────────────────────────────── */
   #mid-row {
@@ -117,19 +118,40 @@
   .fv-zero { color: var(--dim);  font-weight: bold; }
   .fund-cd { font-size: 9px; color: var(--dim); margin-top: 2px; }
 
-  /* ── Active opportunities ───────────────────────────────────────────── */
-  #opps-section { border-bottom: 1px solid var(--border); }
-  #opps-inner table { width: 100%; border-collapse: collapse; }
-  #opps-inner th {
+  /* ── Shared opp table styles ────────────────────────────────────────── */
+  .opp-table { width: 100%; border-collapse: collapse; }
+  .opp-table th {
     padding: 4px 12px; text-align: left;
     color: var(--dim); font-size: 10px; letter-spacing: 1px;
     background: var(--bg2); border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 1;
   }
-  #opps-inner td { padding: 5px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-  .opp-row { background: var(--green-bg); }
+  .opp-table td { padding: 5px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
   .opp-sym  { color: var(--teal); font-weight: bold; }
   .opp-pair { color: var(--dim); }
   .no-opps  { padding: 14px 12px; color: var(--dim); text-align: center; }
+
+  /* ── Active opportunity rows ────────────────────────────────────────── */
+  .opp-active  { background: var(--green-bg); }
+  .opp-expired {
+    background: var(--expired-bg);
+    opacity: 0.6;
+  }
+  .expired-badge {
+    display: inline-block;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: var(--bg3);
+    color: var(--dim);
+    font-size: 10px;
+    border: 1px solid var(--border);
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+
+  /* ── History section ────────────────────────────────────────────────── */
+  #history-section { border-bottom: 1px solid var(--border); }
+  #history-wrap { max-height: 240px; overflow-y: auto; }
 
   /* ── Order books ────────────────────────────────────────────────────── */
   #ob-section { border-bottom: 1px solid var(--border); }
@@ -164,11 +186,10 @@
   }
   .ob-col-hdr {
     display: grid; grid-template-columns: 1fr auto auto;
-    padding: 3px 8px;
+    padding: 3px 8px; gap: 6px;
     color: var(--dim); font-size: 10px;
     background: var(--bg2);
     border-bottom: 1px solid var(--border);
-    gap: 6px;
   }
   .ob-col-hdr span { text-align: right; }
   .ob-col-hdr span:first-child { text-align: left; }
@@ -179,7 +200,6 @@
   }
   .ob-row span { text-align: right; position: relative; z-index: 1; }
   .ob-row span:first-child { text-align: left; position: relative; z-index: 1; }
-  /* depth bar: gradient fills from the right */
   .ob-row.ask-row {
     background: linear-gradient(to left,
       var(--red-depth) var(--d, 0%),
@@ -256,10 +276,18 @@
   </div>
 </div>
 
-<!-- Active opportunities -->
+<!-- Active opportunities (live + cooling-down) -->
 <div id="opps-section">
   <div class="sec-title">ACTIVE OPPORTUNITIES</div>
   <div id="opps-inner"><div class="no-opps">Watching for opportunities…</div></div>
+</div>
+
+<!-- Opportunity history -->
+<div id="history-section">
+  <div class="sec-title">OPPORTUNITY HISTORY</div>
+  <div id="history-wrap">
+    <div class="no-opps">No completed opportunities yet</div>
+  </div>
 </div>
 
 <!-- Order books -->
@@ -272,24 +300,46 @@
 <div id="stats-bar"></div>
 
 <script>
-// ── State ──────────────────────────────────────────────────────────────────
-let lastSnap = null;
-let obSymbol = null;
+// ── Constants ─────────────────────────────────────────────────────────────
+const EXPIRED_DISPLAY_MS = 10_000;   // keep expired opp in active section for 10 s
+const MAX_HIST_TICKS     = 150;      // ~30 s of SSE ticks per opp
+const MAX_HISTORY_ROWS   = 100;      // max rows in history table
+
+// ── State ─────────────────────────────────────────────────────────────────
+let lastSnap   = null;
+let obSymbol   = null;
 let lastSymList = '';
-// key: "SYM|longEx|shortEx" → {symbol, longEx, shortEx, firstSeen, lastSeen, current, peak, history[]}
+
+/**
+ * activeOpps: Map<key, OppEntry>
+ * key = "SYM|longEx|shortEx"
+ * OppEntry = {
+ *   symbol, longEx, shortEx,
+ *   firstSeen:  ms,
+ *   lastViable: ms,   // last tick where viable=true
+ *   expiredAt:  ms|null,
+ *   current:    number,
+ *   peak:       number,
+ *   history:    number[]   // net% per tick
+ * }
+ */
 const activeOpps = new Map();
-const OPP_TTL    = 3000;   // ms after last viable signal before expiring
-const MAX_HIST   = 150;    // ~30 s at 200 ms
+
+/**
+ * oppHistory: HistEntry[]  (newest first)
+ * HistEntry = { symbol, longEx, shortEx, peak, duration, endedAt }
+ */
+const oppHistory = [];
 
 // ── SSE ────────────────────────────────────────────────────────────────────
 const es = new EventSource('/api/stream');
-es.onopen  = () => { setLive(true); };
-es.onerror = () => { setLive(false); };
-es.onmessage = e => { lastSnap = JSON.parse(e.data); render(lastSnap); };
+es.onopen    = () => setLive(true);
+es.onerror   = () => setLive(false);
+es.onmessage = e  => { lastSnap = JSON.parse(e.data); render(lastSnap); };
 
 function setLive(ok) {
   document.getElementById('live-dot').className = ok ? 'live-dot' : 'live-dot stale';
-  document.getElementById('live-txt').textContent = ok ? 'LIVE' : 'RECONNECTING';
+  document.getElementById('live-txt').textContent  = ok ? 'LIVE' : 'RECONNECTING';
 }
 
 // ── Clock ──────────────────────────────────────────────────────────────────
@@ -306,11 +356,20 @@ setInterval(() => {
   });
 }, 1000);
 
-// ── Duration refresh ───────────────────────────────────────────────────────
+// ── Duration + expiry refresh (runs independently of SSE) ──────────────────
 setInterval(() => {
   const now = Date.now();
+  // Live duration timers
   document.querySelectorAll('[data-since]').forEach(el => {
     el.textContent = fmtDuration(now - +el.dataset.since);
+  });
+  // "ended X s ago" timers
+  document.querySelectorAll('[data-expired]').forEach(el => {
+    el.textContent = 'ended ' + fmtDuration(now - +el.dataset.expired) + ' ago';
+  });
+  // History "X ago" timers
+  document.querySelectorAll('[data-endedat]').forEach(el => {
+    el.textContent = fmtAgo(now - +el.dataset.endedat);
   });
 }, 500);
 
@@ -322,6 +381,7 @@ function render(snap) {
   renderFunding(snap.prices);
   updateActiveOpps(snap.spreads);
   renderActiveOpps();
+  renderHistory();
   renderSymbolTabs(snap.prices);
   renderOrderBooks(snap.prices);
   renderStats(snap.stats);
@@ -374,9 +434,7 @@ function renderFunding(prices) {
   const exchanges = [...new Set(prices.flatMap(s => s.funding.map(f => f.exchange)))];
   let html = `<div class="fund-grid" style="grid-template-columns:70px ${exchanges.map(() => '1fr').join(' ')}">`;
   html += `<div class="fund-cell fund-hdr"></div>`;
-  exchanges.forEach(ex => {
-    html += `<div class="fund-cell fund-hdr">${ex.toUpperCase()}</div>`;
-  });
+  exchanges.forEach(ex => { html += `<div class="fund-cell fund-hdr">${ex.toUpperCase()}</div>`; });
   prices.forEach(sym => {
     html += `<div class="fund-cell fund-hdr" style="text-align:left;padding-left:10px">${sym.symbol}</div>`;
     exchanges.forEach(ex => {
@@ -394,10 +452,12 @@ function renderFunding(prices) {
   document.getElementById('funding-grid').innerHTML = html;
 }
 
-// ── Active opportunities (client-side dedup) ───────────────────────────────
+// ── Active opportunity tracking ────────────────────────────────────────────
 function updateActiveOpps(spreads) {
   const now  = Date.now();
   const seen = new Set();
+
+  // Update / create active entries
   for (const r of spreads) {
     if (!r.viable) continue;
     const key = `${r.symbol}|${r.longExchange}|${r.shortExchange}`;
@@ -405,52 +465,119 @@ function updateActiveOpps(spreads) {
     if (!activeOpps.has(key)) {
       activeOpps.set(key, {
         symbol: r.symbol, longEx: r.longExchange, shortEx: r.shortExchange,
-        firstSeen: now, lastSeen: now,
+        firstSeen: now, lastViable: now, expiredAt: null,
         current: r.netSpreadPct, peak: r.netSpreadPct,
         history: []
       });
     }
-    const o = activeOpps.get(key);
-    o.lastSeen = now;
-    o.current  = r.netSpreadPct;
+    const o    = activeOpps.get(key);
+    o.lastViable = now;
+    o.expiredAt  = null;          // still alive — clear any pending expiry
+    o.current    = r.netSpreadPct;
     o.history.push(r.netSpreadPct);
-    if (o.history.length > MAX_HIST) o.history.shift();
+    if (o.history.length > MAX_HIST_TICKS) o.history.shift();
     o.peak = Math.max(...o.history);
   }
-  // Expire stale entries
-  for (const [key, o] of activeOpps)
-    if (!seen.has(key) && now - o.lastSeen > OPP_TTL) activeOpps.delete(key);
+
+  // Mark disappeared entries as expired; promote fully-expired ones to history
+  for (const [key, o] of activeOpps) {
+    if (seen.has(key)) continue;
+
+    if (!o.expiredAt) {
+      // Transition: viable → expired
+      o.expiredAt = now;
+    } else if (now - o.expiredAt >= EXPIRED_DISPLAY_MS) {
+      // Done cooling down — push to history and remove
+      oppHistory.unshift({
+        symbol:   o.symbol,
+        longEx:   o.longEx,
+        shortEx:  o.shortEx,
+        peak:     o.peak,
+        duration: o.expiredAt - o.firstSeen,   // active window only
+        endedAt:  o.expiredAt
+      });
+      if (oppHistory.length > MAX_HISTORY_ROWS) oppHistory.pop();
+      activeOpps.delete(key);
+    }
+  }
 }
 
+// ── Active opportunities render ────────────────────────────────────────────
 function renderActiveOpps() {
   const el = document.getElementById('opps-inner');
   if (activeOpps.size === 0) {
     el.innerHTML = '<div class="no-opps">No active opportunities above threshold</div>';
     return;
   }
-  const rows = [...activeOpps.values()].sort((a, b) => b.current - a.current);
-  let html = `<table>
+
+  // Sort: live first (by current net desc), then expired (by expiredAt desc)
+  const entries = [...activeOpps.values()].sort((a, b) => {
+    const aLive = !a.expiredAt, bLive = !b.expiredAt;
+    if (aLive !== bLive) return aLive ? -1 : 1;
+    return aLive ? b.current - a.current : b.expiredAt - a.expiredAt;
+  });
+
+  let html = `<table class="opp-table">
     <thead><tr>
       <th>SYMBOL</th><th>DIRECTION</th>
       <th>NET %</th><th>PEAK %</th>
-      <th>DURATION</th><th style="min-width:110px">NET HISTORY</th>
+      <th>STATUS</th><th style="min-width:110px">NET HISTORY</th>
     </tr></thead><tbody>`;
-  for (const o of rows) {
-    const netCol = o.current >= 0.15 ? 'var(--green)' : 'var(--yellow)';
-    html += `<tr class="opp-row">
-      <td class="opp-sym">${o.symbol}</td>
-      <td class="opp-pair">${o.longEx} <span style="color:var(--dim)">→</span> ${o.shortEx}</td>
-      <td style="color:${netCol};font-weight:bold">${o.current.toFixed(3)}%</td>
-      <td style="color:var(--teal)">${o.peak.toFixed(3)}%</td>
-      <td style="color:var(--dim)" data-since="${o.firstSeen}">${fmtDuration(Date.now() - o.firstSeen)}</td>
-      <td>${oppSpark(o.history)}</td>
-    </tr>`;
+
+  for (const o of entries) {
+    const live = !o.expiredAt;
+    if (live) {
+      const netCol = o.current >= 0.15 ? 'var(--green)' : 'var(--yellow)';
+      html += `<tr class="opp-active">
+        <td class="opp-sym">${o.symbol}</td>
+        <td class="opp-pair">${o.longEx} <span style="color:var(--dim)">→</span> ${o.shortEx}</td>
+        <td style="color:${netCol};font-weight:bold">${o.current.toFixed(3)}%</td>
+        <td style="color:var(--teal)">${o.peak.toFixed(3)}%</td>
+        <td style="color:var(--dim)" data-since="${o.firstSeen}">${fmtDuration(Date.now() - o.firstSeen)}</td>
+        <td>${oppSpark(o.history)}</td>
+      </tr>`;
+    } else {
+      html += `<tr class="opp-expired">
+        <td class="opp-sym" style="color:var(--dim)">${o.symbol}</td>
+        <td class="opp-pair">${o.longEx} <span style="color:var(--dim)">→</span> ${o.shortEx}</td>
+        <td style="color:var(--dim)">${o.current.toFixed(3)}%</td>
+        <td style="color:var(--dim)">${o.peak.toFixed(3)}%</td>
+        <td style="color:var(--dim)" data-expired="${o.expiredAt}">ended ${fmtDuration(Date.now() - o.expiredAt)} ago</td>
+        <td>${oppSpark(o.history, true)}</td>
+      </tr>`;
+    }
   }
   html += '</tbody></table>';
   el.innerHTML = html;
 }
 
-function oppSpark(hist) {
+// ── History render ─────────────────────────────────────────────────────────
+function renderHistory() {
+  const wrap = document.getElementById('history-wrap');
+  if (oppHistory.length === 0) {
+    wrap.innerHTML = '<div class="no-opps">No completed opportunities yet</div>';
+    return;
+  }
+  let html = `<table class="opp-table">
+    <thead><tr>
+      <th>SYMBOL</th><th>DIRECTION</th><th>PEAK NET %</th><th>DURATION</th><th>ENDED</th>
+    </tr></thead><tbody>`;
+  for (const h of oppHistory) {
+    const peakCol = h.peak >= 0.15 ? 'var(--green)' : h.peak >= 0.05 ? 'var(--yellow)' : 'var(--dim)';
+    html += `<tr>
+      <td class="opp-sym">${h.symbol}</td>
+      <td class="opp-pair">${h.longEx} <span style="color:var(--dim)">→</span> ${h.shortEx}</td>
+      <td style="color:${peakCol};font-weight:bold">${h.peak.toFixed(3)}%</td>
+      <td style="color:var(--dim)">${fmtDuration(h.duration)}</td>
+      <td style="color:var(--dim)" data-endedat="${h.endedAt}">${fmtAgo(Date.now() - h.endedAt)}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+}
+
+// ── Opportunity sparkline ──────────────────────────────────────────────────
+function oppSpark(hist, faded) {
   if (hist.length < 2) return '';
   const mn  = Math.max(0, Math.min(...hist) * 0.95);
   const mx  = Math.max(...hist) * 1.05;
@@ -459,8 +586,9 @@ function oppSpark(hist) {
   const pts = hist.map((v, i) =>
     `${((i / (hist.length - 1)) * W).toFixed(1)},${(H - ((v - mn) / rng * (H - 4)) - 2).toFixed(1)}`
   ).join(' ');
+  const color = faded ? 'var(--dim)' : 'var(--green)';
   return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" style="display:block">
-    <polyline points="${pts}" fill="none" stroke="var(--green)" stroke-width="1.5" stroke-linejoin="round"/>
+    <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round"/>
   </svg>`;
 }
 
@@ -468,7 +596,7 @@ function oppSpark(hist) {
 function renderSymbolTabs(prices) {
   const syms = prices.map(s => s.symbol).join(',');
   if (!obSymbol || !prices.find(s => s.symbol === obSymbol)) obSymbol = prices[0]?.symbol;
-  if (syms === lastSymList) return;   // tabs don't change once connected
+  if (syms === lastSymList) return;
   lastSymList = syms;
   document.getElementById('ob-sym-tabs').innerHTML = prices.map(s =>
     `<div class="sym-tab ${s.symbol === obSymbol ? 'active' : ''}"
@@ -504,7 +632,7 @@ function buildBook(t) {
 
   // Asks: display reversed (worst at top, best at bottom)
   const askRows = [...asks].reverse().map(([p, q], di) => {
-    const origIdx = asks.length - 1 - di;  // index in original (best-first) array
+    const origIdx = asks.length - 1 - di;
     const depth   = (askCum[origIdx] / maxAsk * 100).toFixed(1) + '%';
     return `<div class="ob-row ask-row" style="--d:${depth}">
       <span class="ask-price">${fmtPrice(p)}</span>
@@ -518,8 +646,6 @@ function buildBook(t) {
   const bestBid = bids[0]?.[0] || 0;
   const spreadAbs = bestAsk && bestBid ? fmtPrice(bestAsk - bestBid) : '—';
   const spreadPct = bestAsk && bestBid ? ((bestAsk - bestBid) / bestAsk * 100).toFixed(3) + '%' : '';
-  const midPrice  = bestBid ? fmtPrice(bestBid) : '—';
-  const midCol    = 'var(--text)';
 
   // Bids: best at top, worst at bottom
   const bidRows = bids.map(([p, q], i) => {
@@ -536,7 +662,7 @@ function buildBook(t) {
     <div class="ob-col-hdr"><span>PRICE</span><span>QTY</span><span>TOTAL</span></div>
     <div class="ob-asks">${askRows}</div>
     <div class="ob-mid">
-      <span class="ob-mid-price" style="color:${midCol}">${midPrice}</span>
+      <span class="ob-mid-price">${bestBid ? fmtPrice(bestBid) : '—'}</span>
       <span class="ob-mid-spread">${spreadAbs}${spreadPct ? ' · ' + spreadPct : ''}</span>
     </div>
     <div class="ob-bids">${bidRows}</div>
@@ -547,11 +673,11 @@ function buildBook(t) {
 function renderStats(stats) {
   if (!stats) return;
   const items = [
-    { val: stats.totalOpportunities,            lbl: 'TOTAL OPPS' },
-    { val: stats.maxNetSpreadPct.toFixed(3)+'%', lbl: 'MAX NET' },
-    { val: stats.avgNetSpreadPct.toFixed(3)+'%', lbl: 'AVG NET' },
-    { val: Object.keys(stats.countBySymbol || {}).length,      lbl: 'SYMBOLS' },
-    { val: Object.keys(stats.countByExchangePair || {}).length, lbl: 'PAIRS' },
+    { val: stats.totalOpportunities,             lbl: 'TOTAL OPPS' },
+    { val: stats.maxNetSpreadPct.toFixed(3) + '%', lbl: 'MAX NET' },
+    { val: stats.avgNetSpreadPct.toFixed(3) + '%', lbl: 'AVG NET' },
+    { val: Object.keys(stats.countBySymbol || {}).length,       lbl: 'SYMBOLS' },
+    { val: Object.keys(stats.countByExchangePair || {}).length,  lbl: 'PAIRS' },
   ];
   document.getElementById('stats-bar').innerHTML = items.map(c =>
     `<div class="stat-cell">
@@ -587,6 +713,11 @@ function fmtDuration(ms) {
   if (ms < 60000)   return Math.floor(ms / 1000) + 's';
   if (ms < 3600000) return Math.floor(ms / 60000) + 'm ' + Math.floor((ms % 60000) / 1000) + 's';
   return Math.floor(ms / 3600000) + 'h';
+}
+function fmtAgo(ms) {
+  if (ms < 60000)   return Math.floor(ms / 1000) + 's ago';
+  if (ms < 3600000) return Math.floor(ms / 60000) + 'm ago';
+  return Math.floor(ms / 3600000) + 'h ago';
 }
 </script>
 </body>
