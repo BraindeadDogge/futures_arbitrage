@@ -100,4 +100,11 @@ public class AppConfig {
         String dbPath,
         long flushIntervalMs
     ) {}
+
+    public DashboardConfig dashboardConfig() {
+        Config c = root.getConfig("dashboard");
+        return new DashboardConfig(c.getBoolean("enabled"), c.getInt("port"));
+    }
+
+    public record DashboardConfig(boolean enabled, int port) {}
 }
