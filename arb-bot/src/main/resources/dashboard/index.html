@@ -235,6 +235,53 @@
   .stat-val  { font-size: 18px; font-weight: bold; color: var(--teal); }
   .stat-lbl  { font-size: 9px; color: var(--dim); letter-spacing: 1px; margin-top: 2px; }
 
+  /* ── System stats banner ────────────────────────────────────────────── */
+  #sys-stats-banner {
+    display: flex; align-items: center; gap: 0;
+    padding: 6px 14px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    flex-wrap: wrap;
+    gap: 14px;
+  }
+  .ss-divider { width: 1px; height: 30px; background: var(--border); flex-shrink: 0; }
+  .ss-label { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); }
+  /* CPU / GPU ring */
+  .ss-ring-wrap { display: flex; align-items: center; gap: 8px; }
+  .ss-ring-col { display: flex; flex-direction: column; gap: 2px; }
+  .ss-ring { position: relative; width: 38px; height: 38px; flex-shrink: 0; }
+  .ss-ring svg { transform: rotate(-90deg); }
+  .ss-ring-pct {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 9px; font-weight: bold;
+  }
+  .ss-sub { font-size: 9px; color: var(--dim); }
+  /* RAM bar */
+  .ss-ram-wrap { display: flex; flex-direction: column; gap: 3px; min-width: 110px; }
+  .ss-ram-top { display: flex; justify-content: space-between; align-items: center; }
+  .ss-ram-val { font-size: 10px; font-weight: bold; }
+  .ss-bar-track { height: 4px; background: var(--bg3); border-radius: 2px; }
+  .ss-bar-fill  { height: 100%; border-radius: 2px; transition: width 0.4s; }
+  .ss-ram-foot { display: flex; justify-content: space-between; }
+  /* Network */
+  .ss-net-wrap { display: flex; flex-direction: column; gap: 3px; min-width: 140px; }
+  .ss-net-top  { display: flex; justify-content: space-between; align-items: center; }
+  .ss-net-rates { display: flex; gap: 14px; }
+  .ss-net-rate  { display: flex; align-items: center; gap: 3px; }
+  .ss-net-val   { font-size: 11px; font-weight: bold; }
+  .ss-net-unit  { font-size: 9px; color: var(--dim); }
+  .ss-net-bar-track { height: 3px; background: var(--bg3); border-radius: 1px; }
+  .ss-net-bar-fill  { height: 100%; border-radius: 1px; transition: width 0.4s; }
+  .ss-net-foot  { display: flex; justify-content: space-between; align-items: center; }
+  .ss-badge {
+    font-size: 9px; padding: 1px 6px; border-radius: 3px; font-weight: bold;
+  }
+  .ss-badge-ok  { background: rgba(14,203,129,0.15); color: var(--green); }
+  .ss-badge-hi  { background: rgba(240,185,11,0.15);  color: var(--yellow); }
+  .ss-badge-sat { background: rgba(246,70,93,0.15);   color: var(--red); }
+
   /* ── Misc ───────────────────────────────────────────────────────────── */
   ::-webkit-scrollbar { width: 4px; height: 4px; }
   ::-webkit-scrollbar-track { background: var(--bg); }
@@ -253,6 +300,9 @@
   <div class="ex-pills" id="ex-pills"></div>
   <div id="clock"></div>
 </div>
+
+<!-- System stats banner -->
+<div id="sys-stats-banner"></div>
 
 <!-- Exchange health -->
 <div id="health-row"></div>
@@ -378,6 +428,7 @@ setInterval(() => {
 // ── Main render ────────────────────────────────────────────────────────────
 function render(snap) {
   renderHeader(snap.health);
+  renderSystemStats(snap.systemStats);
   renderHealth(snap.health);
   renderSpreads(snap.spreads);
   renderFunding(snap.prices);
@@ -388,6 +439,114 @@ function render(snap) {
   renderSymbolTabs(snap.prices);
   renderOrderBooks(snap.prices);
   renderStats(snap.stats);
+}
+
+// ── System stats banner ───────────────────────────────────────────────────
+function renderSystemStats(s) {
+  const el = document.getElementById('sys-stats-banner');
+  if (!s) { el.innerHTML = ''; return; }
+
+  const CIRC = 87.96; // 2π * r=14
+
+  function ringColor(pct, isRam) {
+    if (pct < 0) return 'var(--dim)';
+    if (isRam) {
+      if (pct > 85) return 'var(--red)';
+      if (pct > 70) return 'var(--yellow)';
+      return 'var(--blue)';
+    }
+    if (pct > 90) return 'var(--red)';
+    if (pct > 70) return 'var(--yellow)';
+    return 'var(--green)';
+  }
+
+  function ring(pct, isRam) {
+    const col = ringColor(pct, isRam);
+    const label = pct < 0 ? 'N/A' : Math.round(pct) + '%';
+    const dash = pct < 0 ? 0 : (pct / 100) * CIRC;
+    return `<div class="ss-ring">
+      <svg viewBox="0 0 36 36" width="38" height="38">
+        <circle cx="18" cy="18" r="14" fill="none" stroke="var(--bg3)" stroke-width="3"/>
+        <circle cx="18" cy="18" r="14" fill="none" stroke="${col}" stroke-width="3"
+          stroke-dasharray="${dash.toFixed(1)} ${CIRC}" stroke-linecap="round"/>
+      </svg>
+      <span class="ss-ring-pct" style="color:${col}">${label}</span>
+    </div>`;
+  }
+
+  // CPU
+  const cpuBot = s.cpuBotPct >= 0 ? `bot ${Math.round(s.cpuBotPct)}%` : '';
+  const cpuSection = `<div class="ss-ring-wrap">
+    <div class="ss-ring-col">
+      <span class="ss-label">CPU</span>
+      ${cpuBot ? `<span class="ss-sub">${cpuBot}</span>` : ''}
+    </div>
+    ${ring(s.cpuSysPct, false)}
+  </div>`;
+
+  // GPU
+  const gpuSection = `<div class="ss-ring-wrap">
+    <div class="ss-ring-col"><span class="ss-label">GPU</span></div>
+    ${ring(s.gpuPct, false)}
+  </div>`;
+
+  // RAM
+  const ramUsedPct = s.ramSysTotalGb > 0 ? (s.ramSysUsedGb / s.ramSysTotalGb) * 100 : 0;
+  const ramCol = ringColor(ramUsedPct, true);
+  const ramBotTxt = s.ramBotHeapMb > 0 ? `heap ${Math.round(s.ramBotHeapMb)} MB` : '';
+  const ramSection = `<div class="ss-ram-wrap">
+    <div class="ss-ram-top">
+      <span class="ss-label">RAM</span>
+      <span class="ss-ram-val" style="color:${ramCol}">${s.ramSysUsedGb.toFixed(1)} / ${s.ramSysTotalGb.toFixed(0)} GB</span>
+    </div>
+    <div class="ss-bar-track">
+      <div class="ss-bar-fill" style="width:${ramUsedPct.toFixed(1)}%;background:${ramCol}"></div>
+    </div>
+    <div class="ss-ram-foot">
+      <span class="ss-sub">${ramBotTxt}</span>
+      <span class="ss-sub">${Math.round(ramUsedPct)}%</span>
+    </div>
+  </div>`;
+
+  // Network
+  const downPct = s.netMaxSeenMbps > 0 ? Math.min(100, (s.netDownMbps / s.netMaxSeenMbps) * 100) : 0;
+  const netBarCol = s.netStatus === 'SAT' ? 'var(--red)' : s.netStatus === 'HIGH' ? 'var(--yellow)' : 'var(--green)';
+  const badgeCls  = s.netStatus === 'SAT' ? 'ss-badge-sat' : s.netStatus === 'HIGH' ? 'ss-badge-hi' : 'ss-badge-ok';
+  const netSection = `<div class="ss-net-wrap">
+    <div class="ss-net-top">
+      <span class="ss-label">NETWORK</span>
+      <span class="ss-sub">session ${s.netSessionMb.toFixed(0)} MB</span>
+    </div>
+    <div class="ss-net-rates">
+      <div class="ss-net-rate">
+        <span style="color:var(--green);font-size:11px">↓</span>
+        <span class="ss-net-val">${s.netDownMbps.toFixed(1)}</span>
+        <span class="ss-net-unit">Mbps</span>
+      </div>
+      <div class="ss-net-rate">
+        <span style="color:var(--yellow);font-size:11px">↑</span>
+        <span class="ss-net-val">${s.netUpMbps.toFixed(1)}</span>
+        <span class="ss-net-unit">Mbps</span>
+      </div>
+    </div>
+    <div class="ss-net-bar-track">
+      <div class="ss-net-bar-fill" style="width:${downPct.toFixed(1)}%;background:${netBarCol}"></div>
+    </div>
+    <div class="ss-net-foot">
+      <span class="ss-sub">max ${s.netMaxSeenMbps.toFixed(1)} Mbps</span>
+      <span class="ss-badge ${badgeCls}">NET ${s.netStatus}</span>
+    </div>
+  </div>`;
+
+  el.innerHTML = [
+    cpuSection,
+    '<div class="ss-divider"></div>',
+    gpuSection,
+    '<div class="ss-divider"></div>',
+    ramSection,
+    '<div class="ss-divider"></div>',
+    netSection
+  ].join('');
 }
 
 // ── Header pills ──────────────────────────────────────────────────────────
