@@ -713,7 +713,7 @@ function buildBook(t) {
   const bidDep = t.bidDepthUsdt > 0 ? fmtUsdt(t.bidDepthUsdt) : '';
   const askDep = t.askDepthUsdt > 0 ? fmtUsdt(t.askDepthUsdt) : '';
   const depStr = (bidDep || askDep)
-    ? `<span style="font-size:9px;color:var(--dim);font-weight:normal"> bid:${bidDep} ask:${askDep}</span>`
+    ? `<p style="font-size:9px;color:var(--dim);font-weight:normal">bid:${bidDep}</p> <p style="font-size:9px;color:var(--dim);font-weight:normal">ask:${askDep}</p>`
     : '';
 
   return `<div class="ob-panel">
