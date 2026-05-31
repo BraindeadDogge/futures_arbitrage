@@ -3,3 +3,7 @@
 .idea/dataSources.xml
 .idea/dataSources.local.xml
 .idea/dataSources/
+
+# Local planning/brainstorming artifacts
+docs/
+.superpowers/
