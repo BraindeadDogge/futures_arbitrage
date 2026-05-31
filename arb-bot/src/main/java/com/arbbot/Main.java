@@ -6,8 +6,14 @@ import com.arbbot.dashboard.SnapshotAssembler;
 import com.arbbot.dashboard.SystemStatsCollector;
 import com.arbbot.exchange.binance.BinanceFeeClient;
 import com.arbbot.exchange.binance.BinanceWsClient;
+import com.arbbot.exchange.bitget.BitgetFeeClient;
+import com.arbbot.exchange.bitget.BitgetWsClient;
 import com.arbbot.exchange.bybit.BybitFeeClient;
 import com.arbbot.exchange.bybit.BybitWsClient;
+import com.arbbot.exchange.gate.GateFeeClient;
+import com.arbbot.exchange.gate.GateWsClient;
+import com.arbbot.exchange.htx.HtxFeeClient;
+import com.arbbot.exchange.htx.HtxWsClient;
 import com.arbbot.exchange.kucoin.KuCoinFeeClient;
 import com.arbbot.exchange.kucoin.KuCoinWsClient;
 import com.arbbot.exchange.okx.OkxFeeClient;
@@ -53,7 +59,7 @@ public class Main {
         // 4. Endpoint checks — only proceed with live exchanges
         log.info("Checking exchange endpoints...");
         List<String> enabledExchanges = new ArrayList<>();
-        for (String ex : List.of("binance", "kucoin", "bybit", "okx")) {
+        for (String ex : List.of("binance", "kucoin", "bybit", "okx", "gate", "bitget", "htx")) {
             AppConfig.ExchangeConfig exCfg = config.exchangeConfig(ex);
             if (!exCfg.enabled()) continue;
             EndpointChecker checker = new EndpointChecker(
@@ -76,7 +82,7 @@ public class Main {
         for (String ex : enabledExchanges) {
             AppConfig.ExchangeConfig exCfg = config.exchangeConfig(ex);
             symbolRegistry.loadExchange(ex, exCfg.restBaseUrl() + symbolPathFor(ex),
-                SymbolRegistry.ExchangeFormat.valueOf(ex.toUpperCase()));
+                SymbolRegistry.ExchangeFormat.valueOf(ex.toUpperCase().replace("-", "_")));
         }
 
         // 6. Fee engine
@@ -195,6 +201,9 @@ public class Main {
             case "kucoin" -> "/api/v1/timestamp";
             case "bybit" -> "/v5/market/time";
             case "okx" -> "/api/v5/public/time";
+            case "gate" -> "/futures/usdt/contracts?limit=1";
+            case "bitget" -> "/mix/market/contracts?productType=USDT-FUTURES";
+            case "htx" -> "/linear-swap-api/v1/swap_contract_info";
             default -> "/";
         };
     }
@@ -205,6 +214,10 @@ public class Main {
             case "kucoin" -> "/api/v1/timestamp";
             case "bybit" -> "/v5/market/time";
             case "okx" -> "/api/v5/public/time";
+            // Gate.io futures has no dedicated time endpoint; use spot API time
+            case "gate" -> "/spot/time";
+            case "bitget" -> "/public/time";
+            case "htx" -> "/api/v1/timestamp";
             default -> "/";
         };
     }
@@ -213,8 +226,11 @@ public class Main {
         return switch (exchange) {
             case "binance" -> "serverTime";
             case "kucoin" -> "data";
-            case "bybit" -> "time";          // root-level field, already milliseconds
-            case "okx" -> "/data/0/ts";       // nested, milliseconds
+            case "bybit" -> "time";
+            case "okx" -> "/data/0/ts";
+            case "gate" -> "server_time";
+            case "bitget" -> "/data/serverTime";
+            case "htx" -> "data";
             default -> "time";
         };
     }
@@ -225,6 +241,9 @@ public class Main {
             case "kucoin" -> "/api/v1/contracts/active";
             case "bybit" -> "/v5/market/instruments-info?category=linear&limit=1000";
             case "okx" -> "/api/v5/public/instruments?instType=SWAP";
+            case "gate" -> "/futures/usdt/contracts?limit=1000";
+            case "bitget" -> "/mix/market/contracts?productType=USDT-FUTURES";
+            case "htx" -> "/linear-swap-api/v1/swap_contract_info";
             default -> "/";
         };
     }
@@ -236,6 +255,9 @@ public class Main {
             case "kucoin" -> new KuCoinFeeClient(cfg.restBaseUrl(), cfg.apiKey(), cfg.apiSecret(), http);
             case "bybit" -> new BybitFeeClient(cfg.restBaseUrl(), cfg.apiKey(), cfg.apiSecret(), http);
             case "okx" -> new OkxFeeClient(cfg.restBaseUrl(), cfg.apiKey(), cfg.apiSecret(), cfg.apiPassphrase(), http);
+            case "gate" -> new GateFeeClient(cfg.restBaseUrl(), http);
+            case "bitget" -> new BitgetFeeClient(cfg.restBaseUrl(), http);
+            case "htx" -> new HtxFeeClient(cfg.restBaseUrl(), cfg.apiKey(), cfg.apiSecret(), http);
             default -> throw new IllegalArgumentException("Unknown exchange: " + ex);
         };
     }
@@ -261,6 +283,9 @@ public class Main {
             case "kucoin" -> new KuCoinWsClient(cfg.restBaseUrl(), canonicalToExSym, obm, hm, http);
             case "bybit" -> new BybitWsClient(cfg.wsBaseUrl(), exchangeSymbols, obm, hm, http);
             case "okx" -> new OkxWsClient(cfg.wsBaseUrl(), canonicalToExSym, obm, hm, http);
+            case "gate" -> new GateWsClient(cfg.wsBaseUrl(), canonicalToExSym, obm, hm, http);
+            case "bitget" -> new BitgetWsClient(cfg.wsBaseUrl(), exchangeSymbols, obm, hm, http);
+            case "htx" -> new HtxWsClient(cfg.wsBaseUrl(), exchangeSymbols, obm, hm, http);
             default -> throw new IllegalArgumentException("Unknown exchange: " + ex);
         };
     }

@@ -84,8 +84,8 @@ public abstract class BaseWsClient extends WebSocketListener implements Exchange
         });
     }
 
-    /** Immediate reconnect used by the watchdog for silently-dead connections. */
-    private void forceReconnect() {
+    /** Immediate reconnect — call when the book is known-corrupt (seq gap) or connection is dead. */
+    protected void forceReconnect() {
         connected.set(false);
         WebSocket ws = webSocket;
         if (ws != null) ws.cancel(); // cancel() closes TCP immediately — no close frame needed
@@ -132,8 +132,11 @@ public abstract class BaseWsClient extends WebSocketListener implements Exchange
 
     @Override
     public final void onMessage(WebSocket ws, ByteString bytes) {
-        // binary frames ignored by default
+        handleBinaryMessage(ws, bytes);
     }
+
+    /** Override to handle binary (e.g. GZIP-compressed) WebSocket frames. No-op by default. */
+    protected void handleBinaryMessage(WebSocket ws, ByteString bytes) {}
 
     @Override
     public final void onClosing(WebSocket ws, int code, String reason) {

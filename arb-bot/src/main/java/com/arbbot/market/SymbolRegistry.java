@@ -34,7 +34,10 @@ public class SymbolRegistry {
         BINANCE,
         KUCOIN,
         BYBIT,
-        OKX
+        OKX,
+        GATE,
+        BITGET,
+        HTX
     }
 
     public void setWatchedSymbols(List<String> symbols) {
@@ -96,6 +99,34 @@ public class SymbolRegistry {
                     String instId = s.path("instId").asText(); // e.g. BTC-USDT-SWAP
                     String base = instId.split("-")[0];
                     register(base, exchange, instId);
+                }
+            }
+            case GATE -> {
+                // Root is a JSON array of contract objects
+                for (JsonNode s : root) {
+                    if (s.path("in_delisting").asBoolean(false)) continue;
+                    String name = s.path("name").asText(); // e.g. "BTC_USDT"
+                    if (!name.contains("_")) continue;
+                    String base = name.split("_")[0];
+                    register(base, exchange, name);
+                }
+            }
+            case BITGET -> {
+                for (JsonNode s : root.path("data")) {
+                    if (!"perpetual".equals(s.path("symbolType").asText())) continue;
+                    if (!"normal".equals(s.path("status").asText())) continue;
+                    String sym = s.path("symbol").asText();    // e.g. "BTCUSDT"
+                    String base = s.path("baseCoin").asText(); // e.g. "BTC"
+                    if (!base.isEmpty()) register(base, exchange, sym);
+                }
+            }
+            case HTX -> {
+                for (JsonNode s : root.path("data")) {
+                    if (!"swap".equals(s.path("contract_type").asText())) continue;
+                    if (s.path("status").asInt(-1) != 1) continue;
+                    String code = s.path("contract_code").asText(); // e.g. "BTC-USDT"
+                    String base = s.path("symbol").asText();         // e.g. "BTC"
+                    if (!base.isEmpty()) register(base, exchange, code);
                 }
             }
         }
