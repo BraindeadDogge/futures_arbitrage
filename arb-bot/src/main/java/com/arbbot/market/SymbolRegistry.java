@@ -46,11 +46,27 @@ public class SymbolRegistry {
 
     public void loadExchange(String exchange, String url, ExchangeFormat format) {
         try {
-            Request req = new Request.Builder().url(url).get().build();
-            try (Response resp = httpClient.newCall(req).execute()) {
-                String body = resp.body().string();
-                JsonNode root = mapper.readTree(body);
-                parseSymbols(exchange, root, format);
+            if (format == ExchangeFormat.GATE) {
+                // Gate.io enforces max 100 contracts per page — paginate until exhausted
+                int offset = 0;
+                while (true) {
+                    String pageUrl = url + "?limit=100&offset=" + offset;
+                    Request req = new Request.Builder().url(pageUrl).get().build();
+                    try (Response resp = httpClient.newCall(req).execute()) {
+                        JsonNode root = mapper.readTree(resp.body().string());
+                        if (!root.isArray() || root.isEmpty()) break;
+                        parseSymbols(exchange, root, format);
+                        if (root.size() < 100) break;
+                        offset += 100;
+                    }
+                }
+            } else {
+                Request req = new Request.Builder().url(url).get().build();
+                try (Response resp = httpClient.newCall(req).execute()) {
+                    String body = resp.body().string();
+                    JsonNode root = mapper.readTree(body);
+                    parseSymbols(exchange, root, format);
+                }
             }
         } catch (Exception e) {
             log.error("[{}] Failed to load symbols: {}", exchange, e.getMessage());
@@ -114,7 +130,7 @@ public class SymbolRegistry {
             case BITGET -> {
                 for (JsonNode s : root.path("data")) {
                     if (!"perpetual".equals(s.path("symbolType").asText())) continue;
-                    if (!"normal".equals(s.path("status").asText())) continue;
+                    if (!"normal".equals(s.path("symbolStatus").asText())) continue;
                     String sym = s.path("symbol").asText();    // e.g. "BTCUSDT"
                     String base = s.path("baseCoin").asText(); // e.g. "BTC"
                     if (!base.isEmpty()) register(base, exchange, sym);
@@ -123,7 +139,7 @@ public class SymbolRegistry {
             case HTX -> {
                 for (JsonNode s : root.path("data")) {
                     if (!"swap".equals(s.path("contract_type").asText())) continue;
-                    if (s.path("status").asInt(-1) != 1) continue;
+                    if (s.path("contract_status").asInt(-1) != 1) continue;
                     String code = s.path("contract_code").asText(); // e.g. "BTC-USDT"
                     String base = s.path("symbol").asText();         // e.g. "BTC"
                     if (!base.isEmpty()) register(base, exchange, code);

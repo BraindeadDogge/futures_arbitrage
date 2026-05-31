@@ -241,7 +241,7 @@ public class Main {
             case "kucoin" -> "/api/v1/contracts/active";
             case "bybit" -> "/v5/market/instruments-info?category=linear&limit=1000";
             case "okx" -> "/api/v5/public/instruments?instType=SWAP";
-            case "gate" -> "/futures/usdt/contracts?limit=1000";
+            case "gate" -> "/futures/usdt/contracts";
             case "bitget" -> "/mix/market/contracts?productType=USDT-FUTURES";
             case "htx" -> "/linear-swap-api/v1/swap_contract_info";
             default -> "/";
