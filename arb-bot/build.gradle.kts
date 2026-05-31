@@ -27,6 +27,7 @@ val jacksonVersion = "2.17.2"
 val slf4jVersion = "2.0.13"
 val logbackVersion = "1.5.6"
 val micrometerVersion = "1.13.1"
+val oshiVersion = "6.6.1"
 val junitVersion = "5.10.3"
 val mockitoVersion = "5.12.0"
 
@@ -52,6 +53,9 @@ dependencies {
 
     // SQLite
     implementation("org.xerial:sqlite-jdbc:3.46.0.0")
+
+    // System stats (CPU, GPU, RAM, Network)
+    implementation("com.github.oshi:oshi-core:$oshiVersion")
 
     // Testing
     testImplementation("org.junit.jupiter:junit-jupiter:$junitVersion")
