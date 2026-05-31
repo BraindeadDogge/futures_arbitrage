@@ -3,10 +3,20 @@ plugins {
     application
     id("com.diffplug.spotless") version "6.25.0"
     checkstyle
+    id("com.gradleup.shadow") version "8.3.6"
 }
 
 application {
     mainClass.set("com.arbbot.Main")
+}
+
+tasks.shadowJar {
+    archiveBaseName.set("arb-bot")
+    archiveClassifier.set("")
+    archiveVersion.set("")
+    manifest {
+        attributes["Main-Class"] = "com.arbbot.Main"
+    }
 }
 
 group = "com.arbbot"
