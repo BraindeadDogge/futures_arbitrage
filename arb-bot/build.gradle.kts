@@ -101,6 +101,13 @@ tasks.withType<JavaExec> {
     jvmArgs("--enable-preview")
 }
 
+tasks.named<JavaExec>("run") {
+    val logDir = System.getProperty("arbbot.log.dir")
+    val dbPath = System.getProperty("arbbot.storage.dbPath")
+    if (logDir != null) jvmArgs("-Darbbot.log.dir=$logDir")
+    if (dbPath != null) jvmArgs("-Darbbot.storage.dbPath=$dbPath")
+}
+
 spotless {
     java {
         googleJavaFormat("1.22.0")
