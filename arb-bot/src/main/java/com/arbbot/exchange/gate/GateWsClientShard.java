@@ -23,8 +23,8 @@ class GateWsClientShard extends BaseWsClient {
     private final List<String> symbols;
     private final OrderBookManager orderBookManager;
     private final HealthMonitor healthMonitor;
-    private final Map<String, Long> snapshotSeq = new ConcurrentHashMap<>();
-    private final Map<String, List<JsonNode>> pendingDeltas = new ConcurrentHashMap<>();
+    private final Map<String, Map<Double, Double>> accumBids = new ConcurrentHashMap<>();
+    private final Map<String, Map<Double, Double>> accumAsks = new ConcurrentHashMap<>();
 
     GateWsClientShard(String wsBaseUrl, Map<String, String> canonicalToGate,
                       OrderBookManager manager, HealthMonitor healthMonitor,
@@ -42,14 +42,13 @@ class GateWsClientShard extends BaseWsClient {
 
     @Override
     protected void onBeforeReconnect() {
-        pendingDeltas.clear();
-        snapshotSeq.clear();
+        accumBids.clear();
+        accumAsks.clear();
     }
 
     @Override
     protected void onConnected(WebSocket ws) {
         for (String sym : symbols) {
-            pendingDeltas.put(sym, new ArrayList<>());
             long t = System.currentTimeMillis() / 1000;
             send("{\"time\":" + t + ",\"channel\":\"futures.order_book_update\","
                 + "\"event\":\"subscribe\",\"payload\":[\"" + sym + "\",\"100ms\",\"20\"]}");
@@ -66,46 +65,44 @@ class GateWsClientShard extends BaseWsClient {
             if (!"futures.order_book_update".equals(channel)) return;
 
             String event = root.path("event").asText();
-            // "subscribe" ack — skip
             if ("subscribe".equals(event)) return;
+            if (!"update".equals(event)) return;
 
             JsonNode result = root.path("result");
-            String sym = result.path("contract").asText();
+            String sym = result.path("s").asText();  // field is "s", not "contract"
             if (sym.isEmpty()) return;
 
             OrderBook book = orderBookManager.getOrCreateBook("gate", sym);
+            List<OrderBook.PriceLevel> bidLevels = parseLevels(result.path("b"));  // "b", not "bids"
+            List<OrderBook.PriceLevel> askLevels = parseLevels(result.path("a"));  // "a", not "asks"
 
-            if ("all".equals(event)) {
-                long id = result.path("id").asLong();
-                Map<Double, Double> bids = parseLevelsToMap(result.path("bids"));
-                Map<Double, Double> asks = parseLevelsToMap(result.path("asks"));
-                book.applySnapshot(bids, asks, id);
-                snapshotSeq.put(sym, id);
-
-                List<JsonNode> buffered = pendingDeltas.getOrDefault(sym, List.of());
-                for (JsonNode delta : buffered) {
-                    long dU = delta.path("U").asLong();
-                    if (dU <= id) continue;
-                    book.applyDelta(parseLevels(delta.path("bids")), parseLevels(delta.path("asks")), -1L);
+            if (!book.isInitialized()) {
+                // futures.order_book_update has no snapshot event — accumulate deltas until both sides populated
+                Map<Double, Double> bids = accumBids.computeIfAbsent(sym, k -> new HashMap<>());
+                Map<Double, Double> asks = accumAsks.computeIfAbsent(sym, k -> new HashMap<>());
+                applyToMap(bids, bidLevels);
+                applyToMap(asks, askLevels);
+                if (!bids.isEmpty() && !asks.isEmpty()) {
+                    book.applySnapshot(bids, asks, result.path("u").asLong());
+                    accumBids.remove(sym);
+                    accumAsks.remove(sym);
+                    recordDataReceived();
+                    log.info("[gate] Book initialized from deltas for {}", sym);
                 }
-                pendingDeltas.remove(sym);
-                recordDataReceived();
-                log.info("[gate] Snapshot applied for {}, id={}", sym, id);
-
-            } else if ("update".equals(event)) {
-                if (!book.isInitialized()) {
-                    pendingDeltas.computeIfAbsent(sym, k -> new ArrayList<>()).add(result);
-                    return;
-                }
-                Long snapSeq = snapshotSeq.get(sym);
-                long u = result.path("u").asLong();
-                if (snapSeq != null && u <= snapSeq) return;
-                book.applyDelta(parseLevels(result.path("bids")), parseLevels(result.path("asks")), -1L);
+            } else {
+                book.applyDelta(bidLevels, askLevels, -1L);
                 recordDataReceived();
             }
             healthMonitor.recordWsTick("gate");
         } catch (Exception e) {
             log.error("[gate] Message parse error: {}", e.getMessage());
+        }
+    }
+
+    private void applyToMap(Map<Double, Double> map, List<OrderBook.PriceLevel> levels) {
+        for (OrderBook.PriceLevel level : levels) {
+            if (level.qty() <= 0.0) map.remove(level.price());
+            else map.put(level.price(), level.qty());
         }
     }
 
@@ -134,11 +131,4 @@ class GateWsClientShard extends BaseWsClient {
         return levels;
     }
 
-    private Map<Double, Double> parseLevelsToMap(JsonNode array) {
-        Map<Double, Double> map = new HashMap<>();
-        for (JsonNode entry : array) {
-            map.put(Double.parseDouble(entry.path("p").asText()), entry.path("s").asDouble());
-        }
-        return map;
-    }
 }
