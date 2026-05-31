@@ -123,8 +123,7 @@ public class SystemStatsCollector {
     private double pollCpuBot() {
         try {
             OSProcess proc = os.getProcess(pid);
-            double load = proc.getProcessCpuLoadBetweenTicks(prevProc)
-                * processor.getLogicalProcessorCount() * 100.0;
+            double load = proc.getProcessCpuLoadBetweenTicks(prevProc) * 100.0;
             prevProc = proc;
             return Double.isFinite(load) ? Math.max(0, Math.min(100, load)) : -1;
         } catch (Exception e) {
