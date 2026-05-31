@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- suppress WireMock / Jetty test infrastructure noise -->
+    <logger name="com.github.tomakehurst" level="OFF"/>
+    <logger name="org.eclipse.jetty" level="OFF"/>
+    <logger name="wiremock" level="OFF"/>
+    <logger name="org.mockito" level="OFF"/>
+
+    <root level="WARN">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>

@@ -15,9 +15,10 @@ import java.util.concurrent.atomic.AtomicLong;
 public abstract class BaseWsClient extends WebSocketListener implements Exchange {
 
     private static final Logger log = LoggerFactory.getLogger(BaseWsClient.class);
-    private static final long MAX_BACKOFF_MS     = 30_000;
-    private static final long WATCHDOG_CHECK_MS  =  5_000;  // poll interval
-    private static final long WATCHDOG_STALE_MS  = 15_000;  // trigger reconnect if no message
+    private static final long MAX_BACKOFF_MS        = 30_000;
+    private static final long WATCHDOG_CHECK_MS     =  5_000;  // poll interval
+    private static final long WATCHDOG_STALE_MS     = 15_000;  // reconnect if no message at all
+    private static final long WATCHDOG_DATA_STALE_MS = 20_000; // reconnect if no book data (pings don't count)
 
     protected final String exchangeName;
     protected final OkHttpClient httpClient;
@@ -27,6 +28,7 @@ public abstract class BaseWsClient extends WebSocketListener implements Exchange
     private final AtomicBoolean reconnectPending  = new AtomicBoolean(false);
     private final AtomicInteger reconnectAttempts = new AtomicInteger(0);
     private final AtomicLong    lastMessageAt     = new AtomicLong(0);
+    private final AtomicLong    lastDataAt        = new AtomicLong(0);
     private volatile Thread     watchdogThread;
 
     protected BaseWsClient(String exchangeName, OkHttpClient httpClient) {
@@ -40,9 +42,19 @@ public abstract class BaseWsClient extends WebSocketListener implements Exchange
     @Override
     public void connect() {
         shouldReconnect.set(true);
-        lastMessageAt.set(System.currentTimeMillis()); // seed so watchdog doesn't fire before first message
+        long now = System.currentTimeMillis();
+        lastMessageAt.set(now);
+        lastDataAt.set(now); // seed so watchdog doesn't fire before first message
         startWatchdog();
         doConnect();
+    }
+
+    /**
+     * Call after successfully applying any order book delta or snapshot.
+     * Distinct from lastMessageAt which also resets on heartbeat pings.
+     */
+    protected void recordDataReceived() {
+        lastDataAt.set(System.currentTimeMillis());
     }
 
     private void startWatchdog() {
@@ -56,10 +68,16 @@ public abstract class BaseWsClient extends WebSocketListener implements Exchange
                     return;
                 }
                 if (!connected.get() || !shouldReconnect.get()) continue;
-                long idleMs = System.currentTimeMillis() - lastMessageAt.get();
-                if (idleMs > WATCHDOG_STALE_MS) {
+                long now = System.currentTimeMillis();
+                long msgIdleMs  = now - lastMessageAt.get();
+                long dataIdleMs = now - lastDataAt.get();
+                if (msgIdleMs > WATCHDOG_STALE_MS) {
                     log.warn("[{}] Watchdog: no message for {}s — forcing reconnect",
-                             exchangeName, idleMs / 1000);
+                             exchangeName, msgIdleMs / 1000);
+                    forceReconnect();
+                } else if (dataIdleMs > WATCHDOG_DATA_STALE_MS) {
+                    log.warn("[{}] Watchdog: connected but no book data for {}s — forcing reconnect",
+                             exchangeName, dataIdleMs / 1000);
                     forceReconnect();
                 }
             }
@@ -100,7 +118,9 @@ public abstract class BaseWsClient extends WebSocketListener implements Exchange
         connected.set(true);
         reconnectAttempts.set(0);
         reconnectPending.set(false);
-        lastMessageAt.set(System.currentTimeMillis());
+        long now = System.currentTimeMillis();
+        lastMessageAt.set(now);
+        lastDataAt.set(now);
         onConnected(ws);
     }
 

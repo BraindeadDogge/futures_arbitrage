@@ -74,6 +74,7 @@ public class BybitWsClient extends BaseWsClient {
                     book.applyDelta(parseLevels(delta.path("b")), parseLevels(delta.path("a")), -1L);
                 }
                 pendingDeltas.remove(symbol);
+                recordDataReceived();
                 log.info("[bybit] Snapshot applied for {}, seq={}", symbol, seq);
             } else if ("delta".equals(type)) {
                 if (!book.isInitialized()) {
@@ -85,6 +86,7 @@ public class BybitWsClient extends BaseWsClient {
                     return;
                 }
                 book.applyDelta(parseLevels(data.path("b")), parseLevels(data.path("a")), -1L);
+                recordDataReceived();
             }
             healthMonitor.recordWsTick("bybit");
         } catch (Exception e) {

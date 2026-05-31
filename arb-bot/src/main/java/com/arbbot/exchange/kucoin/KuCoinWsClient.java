@@ -116,6 +116,7 @@ public class KuCoinWsClient extends BaseWsClient {
             parseChange(changeStr, bids, asks);
             book.applyDelta(bids, asks, -1L);
             lastAppliedSeq.put(kucoinSymbol, seq);
+            recordDataReceived();
             healthMonitor.recordWsTick("kucoin");
         } catch (Exception e) {
             log.error("[kucoin] Message parse error: {}", e.getMessage());
@@ -168,6 +169,7 @@ public class KuCoinWsClient extends BaseWsClient {
                         }
                     }
                     snapshotInProgress.getOrDefault(kucoinSymbol, new AtomicBoolean()).set(false);
+                    recordDataReceived();
                     log.info("[kucoin] Snapshot applied for {}, seq={}", kucoinSymbol, seq);
                 }
             } catch (Exception e) {

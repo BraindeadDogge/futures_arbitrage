@@ -89,6 +89,7 @@ public class BinanceWsClient extends BaseWsClient {
             if (u <= lastAppliedU.getOrDefault(symbol, 0L)) return;
             book.applyDelta(bids, asks, -1L);
             lastAppliedU.put(symbol, u);
+            recordDataReceived();
             healthMonitor.recordWsTick("binance");
         } catch (Exception e) {
             log.error("[binance] Message parse error: {}", e.getMessage());
@@ -133,6 +134,7 @@ public class BinanceWsClient extends BaseWsClient {
                         }
                     }
                     snapshotInProgress.getOrDefault(symbol, new AtomicBoolean()).set(false);
+                    recordDataReceived();
                     log.info("[binance] Snapshot applied for {}, lastUpdateId={}", symbol, lastUpdateId);
                 }
             } catch (Exception e) {

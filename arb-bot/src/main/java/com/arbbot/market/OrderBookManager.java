@@ -10,7 +10,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class OrderBookManager {
 
     private static final Logger log = LoggerFactory.getLogger(OrderBookManager.class);
-    private static final long PRICE_FREEZE_THRESHOLD_MS = 60_000;
+    private static final long PRICE_FREEZE_THRESHOLD_MS = 120_000;
 
     private final long wsStaleThresholdMs;
     // key: "exchange:exchangeSymbol"
@@ -41,12 +41,16 @@ public class OrderBookManager {
         if (book.isBestBidFrozen(PRICE_FREEZE_THRESHOLD_MS)) {
             if (!Boolean.TRUE.equals(priceFreezeState.put(bookKey, true))) {
                 int n = freezeCount.computeIfAbsent(bookKey, k -> new AtomicInteger()).incrementAndGet();
+                long bookIdleMs = System.currentTimeMillis() - book.getLastUpdateTime().toEpochMilli();
+                String bookState = bookIdleMs < 5_000
+                    ? "book live, level-1 bid stable"
+                    : "book idle " + bookIdleMs / 1000 + "s";
                 if (n <= FREEZE_WARN_LIMIT) {
-                    log.warn("Price freeze: {}/{} best bid unchanged >{}s — excluding from scanner (occurrence #{})",
-                        exchange, exchangeSymbol, PRICE_FREEZE_THRESHOLD_MS / 1000, n);
+                    log.warn("Price freeze: {}/{} best bid unchanged >{}s [{}] — excluding from scanner (occurrence #{})",
+                        exchange, exchangeSymbol, PRICE_FREEZE_THRESHOLD_MS / 1000, bookState, n);
                 } else {
-                    log.debug("Price freeze: {}/{} best bid unchanged >{}s (occurrence #{}, suppressed to DEBUG)",
-                        exchange, exchangeSymbol, PRICE_FREEZE_THRESHOLD_MS / 1000, n);
+                    log.debug("Price freeze: {}/{} best bid unchanged >{}s [{}] (occurrence #{}, suppressed to DEBUG)",
+                        exchange, exchangeSymbol, PRICE_FREEZE_THRESHOLD_MS / 1000, bookState, n);
                 }
             }
             return Optional.of(Tick.unreliable(canonical, exchange));

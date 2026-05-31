@@ -79,6 +79,7 @@ public class OkxWsClient extends BaseWsClient {
                     book.applyDelta(parseLevels(delta.path("bids")), parseLevels(delta.path("asks")), -1L);
                 }
                 pendingDeltas.remove(instId);
+                recordDataReceived();
                 log.info("[okx] Snapshot applied for {}, seqId={}", instId, seqId);
             } else if ("update".equals(action)) {
                 if (!book.isInitialized()) {
@@ -88,6 +89,7 @@ public class OkxWsClient extends BaseWsClient {
                 Long snapSeq = snapshotSeq.get(instId);
                 if (snapSeq != null && seqId <= snapSeq) return;
                 book.applyDelta(parseLevels(data.path("bids")), parseLevels(data.path("asks")), -1L);
+                recordDataReceived();
             }
             healthMonitor.recordWsTick("okx");
         } catch (Exception e) {
