@@ -65,27 +65,87 @@ export KUCOIN_API_KEY=xxx   KUCOIN_API_SECRET=xxx  KUCOIN_API_PASSPHRASE=xxx
 
 ## ⚙️ How to Run
 
-### All run modes
+There are three ways to run the bot. All of them ultimately do the same thing: compile your `.java` source files to `.class` bytecode and launch the JVM with the right classpath. The difference is in who manages the classpath and whether you have a debugger attached.
 
-| Mode | Command | When to use |
-|---|---|---|
-| Development | `./gradlew run` | Normal usage; classpath reload on rebuild |
-| Custom config | `./gradlew run --args="" -Dconfig.file=local.conf` | Override any key without editing `application.conf` |
-| Specific log level | `./gradlew run` (logback controls levels) | Always via `src/main/resources/logback.xml` |
-| Integration tests only | `./scripts/check-endpoints.sh` | Verify live exchange connectivity |
-| Fat JAR | See note below | Production deployment |
+### Option 1: `./gradlew run` — quick terminal launch
 
-> 📝 The fat JAR approach (`scripts/run.sh`) requires adding the Shadow plugin to `build.gradle.kts` first — the script documents this. Use `./gradlew run` for all development purposes.
+Gradle compiles any changed files and starts the bot in one command. Good for a quick check or if you're not using an IDE.
 
-### JVM flag required
-
-All run commands go through Gradle's `application` plugin, which already passes `--enable-preview`. If you ever invoke `java` directly:
+**Pros:** Zero setup. Always uses the exact classpath Gradle resolves.  
+**Cons:** Slightly slower start (Gradle daemon overhead). No debugger. Logs printed to terminal alongside Gradle output.
 
 ```bash
-java --enable-preview -cp build/libs/arb-bot-1.0.0.jar com.arbbot.Main
+cd arb-bot
+./gradlew run
 ```
 
-This flag is required because `OpportunityScanner` and `Main` use Java 21 preview features (pattern matching in switch expressions).
+With path overrides (so logs and DB go to fixed locations regardless of working directory):
+```bash
+./gradlew run \
+  -Darbbot.log.dir=/absolute/path/arb-bot/logs \
+  -Darbbot.storage.dbPath=/absolute/path/arb-bot/data/opportunities.db
+```
+
+**IntelliJ setup** (Gradle toolbar → right-click `run` → Modify Run Configuration):
+- **VM options**: `-Darbbot.log.dir=/absolute/path/arb-bot/logs -Darbbot.storage.dbPath=/absolute/path/arb-bot/data/opportunities.db`
+
+> 📝 These `-D` properties are forwarded from the Gradle process into the bot's JVM automatically via `build.gradle.kts`. Do **not** add `--enable-preview` or `-jar` here — those break the Gradle daemon.
+
+---
+
+### Option 2: IntelliJ Application run config — recommended for development
+
+IntelliJ compiles incrementally in the background as you type, so by the time you hit Run it's already built. Full debugger support: set breakpoints, step through order book updates, inspect spread calculations live.
+
+**Pros:** Fastest restart cycle. Debugger. IntelliJ highlights compile errors before you run.  
+**Cons:** Requires initial setup. If you add a new dependency to `build.gradle.kts`, you must re-sync Gradle before it appears on the classpath.
+
+**IntelliJ setup** (Run → Edit Configurations → `+` → Application):
+
+| Field | Value |
+|---|---|
+| **Name** | Arb Bot |
+| **Main class** | `com.arbbot.Main` |
+| **Module** | `arb-bot.main` |
+| **VM options** | `--enable-preview -Darbbot.log.dir=/absolute/path/arb-bot/logs -Darbbot.storage.dbPath=/absolute/path/arb-bot/data/opportunities.db` |
+| **Working directory** | `/absolute/path/arb-bot` |
+| **Environment variables** | `BINANCE_API_KEY=xxx;BINANCE_API_SECRET=xxx;...` |
+
+The working directory matters for any relative paths that aren't overridden by `-D` properties.
+
+---
+
+### Option 3: Fat JAR — run without IntelliJ or Gradle
+
+Build a single self-contained JAR with all dependencies bundled inside. Drop it anywhere and run with plain `java`. Useful for running on a remote server or outside of a development environment.
+
+**Pros:** No Gradle or IntelliJ needed at runtime. Portable single file.  
+**Cons:** Must rebuild the JAR after every code change (`./gradlew shadowJar`). No debugger.
+
+```bash
+# Build (from arb-bot/ directory)
+./gradlew shadowJar
+# Output: build/libs/arb-bot.jar  (~25 MB, all dependencies bundled)
+
+# Run
+java --enable-preview \
+  -Darbbot.log.dir=/absolute/path/arb-bot/logs \
+  -Darbbot.storage.dbPath=/absolute/path/arb-bot/data/opportunities.db \
+  -jar build/libs/arb-bot.jar
+```
+
+> 📝 `--enable-preview` is required because the project uses Java 21 preview features (pattern matching in switch expressions). The fat JAR does not auto-apply JVM flags — you must pass it explicitly.
+
+---
+
+### JVM system properties
+
+Two properties let you pin file locations regardless of working directory:
+
+| Property | Controls | Default (if not set) |
+|---|---|---|
+| `-Darbbot.log.dir` | Directory for `arbbot.log` and rotated `.gz` files | `logs/` relative to working directory |
+| `-Darbbot.storage.dbPath` | Full path to the SQLite database file | `data/opportunities.db` relative to working directory |
 
 ### Environment variables
 
@@ -143,19 +203,6 @@ Use `Ctrl+C` or `kill <pid>` — both trigger the JVM shutdown hook registered i
 6. Calls `OpportunityStore.close()` — flushes pending buffer to SQLite and closes the connection
 
 > ⚠️ **Force-kill (`kill -9`) skips the shutdown hook**. Any `Opportunity` objects in the `LinkedBlockingQueue` buffer that haven't been flushed yet will be lost. SQLite itself is transactional and will not be corrupted, but the last flush interval of data (default 1 second) may be missing.
-
-### Configuring in IntelliJ IDEA
-
-1. Open **Run > Edit Configurations**
-2. Click **+** → **Application**
-3. Set:
-   - **Main class**: `com.arbbot.Main`
-   - **VM options**: `--enable-preview`
-   - **Environment variables**: paste your `BINANCE_API_KEY=xxx;BINANCE_API_SECRET=xxx;...` list
-   - **Working directory**: `$MODULE_WORKING_DIR$` (the `arb-bot` directory)
-4. Click **OK** and use the green **Run** button
-
-To use a custom config file, add `-Dconfig.file=/absolute/path/to/local.conf` to **VM options**.
 
 ---
 
