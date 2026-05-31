@@ -35,11 +35,11 @@ class BinanceWsClientTest {
             .addHeader("Content-Type", "application/json"));
 
         String restUrl = mockServer.url("").toString().replaceAll("/$", "");
-        var client = new BinanceWsClient(
+        var shard = new BinanceWsClientShard(
             "ws://localhost:1", restUrl, List.of("BTCUSDT"),
             manager, health, new OkHttpClient());
 
-        client.fetchSnapshotForTest("BTCUSDT");
+        shard.fetchSnapshotForTest("BTCUSDT");
         Thread.sleep(500);
 
         var book = manager.getOrCreateBook("binance", "BTCUSDT");
@@ -56,11 +56,11 @@ class BinanceWsClientTest {
             .addHeader("Content-Type", "application/json"));
 
         String restUrl = mockServer.url("").toString().replaceAll("/$", "");
-        var client = new BinanceWsClient(
+        var shard = new BinanceWsClientShard(
             "ws://localhost:1", restUrl, List.of("BTCUSDT"),
             manager, health, new OkHttpClient());
 
-        client.fetchSnapshotForTest("BTCUSDT");
+        shard.fetchSnapshotForTest("BTCUSDT");
         Thread.sleep(500);
 
         var request = mockServer.takeRequest();

@@ -1,31 +1,30 @@
-package com.arbbot.exchange;
+package com.arbbot.exchange.bitget;
 
 import static org.junit.jupiter.api.Assertions.*;
-import com.arbbot.exchange.bitget.BitgetWsClient;
 import com.arbbot.health.HealthMonitor;
 import com.arbbot.market.OrderBookManager;
 import okhttp3.OkHttpClient;
 import org.junit.jupiter.api.Test;
 import java.util.List;
 
-class BitgetWsClientTest {
+class BitgetWsClientShardTest {
 
     @Test
     void nameAndInitialStateAreCorrect() {
         var manager = new OrderBookManager(2000);
         var health = new HealthMonitor(2000);
-        var client = new BitgetWsClient(
+        var shard = new BitgetWsClientShard(
             "wss://ws.bitget.com/v2/ws/public",
             List.of("BTCUSDT"), manager, health, new OkHttpClient());
-        assertEquals("bitget", client.name());
-        assertFalse(client.isConnected());
+        assertEquals("bitget", shard.name());
+        assertFalse(shard.isConnected());
     }
 
     @Test
     void parsesSnapshotFromActionSnapshot() {
         var manager = new OrderBookManager(2000);
         var health = new HealthMonitor(2000);
-        var client = new BitgetWsClient(
+        var shard = new BitgetWsClientShard(
             "wss://ws.bitget.com/v2/ws/public",
             List.of("BTCUSDT"), manager, health, new OkHttpClient());
 
@@ -39,7 +38,7 @@ class BitgetWsClientTest {
                "checksum":-855196932,"seq":1000001,"ts":"1695716059516"
              }],"ts":1695716059516}
             """;
-        client.onMessage(null, snapshot);
+        shard.onMessage(null, snapshot);
 
         var book = manager.getOrCreateBook("bitget", "BTCUSDT");
         assertTrue(book.isInitialized());
@@ -51,7 +50,7 @@ class BitgetWsClientTest {
     void applyDeltaRemovesLevelWhenQtyZero() {
         var manager = new OrderBookManager(2000);
         var health = new HealthMonitor(2000);
-        var client = new BitgetWsClient(
+        var shard = new BitgetWsClientShard(
             "wss://ws.bitget.com/v2/ws/public",
             List.of("BTCUSDT"), manager, health, new OkHttpClient());
 
@@ -61,7 +60,7 @@ class BitgetWsClientTest {
              "data":[{"asks":[["50001.0","0.8"]],"bids":[["50000.0","1.5"]],
                       "checksum":0,"seq":100,"ts":"1"}],"ts":1}
             """;
-        client.onMessage(null, snapshot);
+        shard.onMessage(null, snapshot);
 
         // Remove best ask via qty=0
         String delta = """
@@ -69,7 +68,7 @@ class BitgetWsClientTest {
              "arg":{"instType":"USDT-FUTURES","channel":"books","instId":"BTCUSDT"},
              "data":[{"asks":[["50001.0","0"]],"bids":[],"checksum":0,"seq":101,"ts":"2"}],"ts":2}
             """;
-        client.onMessage(null, delta);
+        shard.onMessage(null, delta);
 
         var book = manager.getOrCreateBook("bitget", "BTCUSDT");
         assertTrue(book.bestAsk().isEmpty(), "Best ask should be removed after qty=0 delta");

@@ -1,7 +1,6 @@
-package com.arbbot.exchange;
+package com.arbbot.exchange.htx;
 
 import static org.junit.jupiter.api.Assertions.*;
-import com.arbbot.exchange.htx.HtxWsClient;
 import com.arbbot.health.HealthMonitor;
 import com.arbbot.market.OrderBookManager;
 import okhttp3.OkHttpClient;
@@ -11,7 +10,7 @@ import java.io.ByteArrayOutputStream;
 import java.util.List;
 import java.util.zip.GZIPOutputStream;
 
-class HtxWsClientTest {
+class HtxWsClientShardTest {
 
     private static ByteString gzip(String text) throws Exception {
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
@@ -25,18 +24,18 @@ class HtxWsClientTest {
     void nameAndInitialStateAreCorrect() {
         var manager = new OrderBookManager(2000);
         var health = new HealthMonitor(2000);
-        var client = new HtxWsClient(
+        var shard = new HtxWsClientShard(
             "wss://api.hbdm.com/linear-swap-ws",
             List.of("BTC-USDT"), manager, health, new OkHttpClient());
-        assertEquals("htx", client.name());
-        assertFalse(client.isConnected());
+        assertEquals("htx", shard.name());
+        assertFalse(shard.isConnected());
     }
 
     @Test
     void decompressesAndParsesSnapshotFrame() throws Exception {
         var manager = new OrderBookManager(2000);
         var health = new HealthMonitor(2000);
-        var client = new HtxWsClient(
+        var shard = new HtxWsClientShard(
             "wss://api.hbdm.com/linear-swap-ws",
             List.of("BTC-USDT"), manager, health, new OkHttpClient());
 
@@ -49,7 +48,7 @@ class HtxWsClientTest {
                "bids":[[50000.0,150.0],[49999.0,200.0]],
                "asks":[[50001.0,80.0],[50002.0,120.0]]}}
             """;
-        client.onMessage(null, gzip(snapshot)); // routes through handleBinaryMessage
+        shard.onMessage(null, gzip(snapshot)); // routes through handleBinaryMessage
 
         var book = manager.getOrCreateBook("htx", "BTC-USDT");
         assertTrue(book.isInitialized());
@@ -61,13 +60,13 @@ class HtxWsClientTest {
     void doesNotThrowOnCompressedPingFrame() throws Exception {
         var manager = new OrderBookManager(2000);
         var health = new HealthMonitor(2000);
-        var client = new HtxWsClient(
+        var shard = new HtxWsClientShard(
             "wss://api.hbdm.com/linear-swap-ws",
             List.of("BTC-USDT"), manager, health, new OkHttpClient());
 
         // Server-initiated ping — should decompress and handle without throwing
         // (pong send requires an active connection; here we just verify no exception)
         String pingMsg = "{\"ping\":1668144045036}";
-        assertDoesNotThrow(() -> client.onMessage(null, gzip(pingMsg)));
+        assertDoesNotThrow(() -> shard.onMessage(null, gzip(pingMsg)));
     }
 }
