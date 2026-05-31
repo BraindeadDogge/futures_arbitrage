@@ -3,6 +3,7 @@ package com.arbbot;
 import com.arbbot.config.AppConfig;
 import com.arbbot.dashboard.DashboardServer;
 import com.arbbot.dashboard.SnapshotAssembler;
+import com.arbbot.dashboard.SystemStatsCollector;
 import com.arbbot.exchange.binance.BinanceFeeClient;
 import com.arbbot.exchange.binance.BinanceWsClient;
 import com.arbbot.exchange.bybit.BybitFeeClient;
@@ -144,15 +145,19 @@ public class Main {
         // 11b. Dashboard
         var dashCfg = config.dashboardConfig();
         DashboardServer dashServer = null;
+        SystemStatsCollector statsCollector = null;
         if (dashCfg.enabled()) {
+            statsCollector = new SystemStatsCollector();
+            statsCollector.start();
             var assembler = new SnapshotAssembler(
                 obManager, symbolRegistry, feeEngine, healthMonitor, store,
-                scanConfig, List.copyOf(enabledExchanges));
+                scanConfig, List.copyOf(enabledExchanges), statsCollector);
             dashServer = new DashboardServer(dashCfg.port(), assembler);
             dashServer.start();
             log.info("Dashboard: http://localhost:{}/", dashCfg.port());
         }
         final DashboardServer dashServerRef = dashServer;
+        final SystemStatsCollector statsCollectorRef = statsCollector;
 
         // 12. Health check scheduler
         ScheduledExecutorService healthScheduler = Executors.newSingleThreadScheduledExecutor(
@@ -169,6 +174,7 @@ public class Main {
         // 13. Shutdown hook
         Runtime.getRuntime().addShutdownHook(Thread.ofVirtual().name("shutdown").unstarted(() -> {
             log.info("Shutting down...");
+            if (statsCollectorRef != null) statsCollectorRef.stop();
             if (dashServerRef != null) dashServerRef.stop();
             scanScheduler.shutdown();
             healthScheduler.shutdown();

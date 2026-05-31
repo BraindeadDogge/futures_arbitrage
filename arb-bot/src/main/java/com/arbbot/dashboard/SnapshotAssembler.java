@@ -37,6 +37,7 @@ public class SnapshotAssembler {
   private final OpportunityStore store;
   private final AppConfig.ScannerConfig scanConfig;
   private final List<String> enabledExchanges;
+  private final SystemStatsCollector statsCollector;
 
   public SnapshotAssembler(
       OrderBookManager obManager,
@@ -45,7 +46,8 @@ public class SnapshotAssembler {
       HealthMonitor healthMonitor,
       OpportunityStore store,
       AppConfig.ScannerConfig scanConfig,
-      List<String> enabledExchanges) {
+      List<String> enabledExchanges,
+      SystemStatsCollector statsCollector) {
     this.obManager = obManager;
     this.symbolRegistry = symbolRegistry;
     this.feeEngine = feeEngine;
@@ -53,6 +55,7 @@ public class SnapshotAssembler {
     this.store = store;
     this.scanConfig = scanConfig;
     this.enabledExchanges = enabledExchanges;
+    this.statsCollector = statsCollector;
   }
 
   public DashboardSnapshot buildSnapshot() {
@@ -192,7 +195,7 @@ public class SnapshotAssembler {
       log.debug("queryStats failed: {}", e.getMessage());
     }
 
-    return new DashboardSnapshot(now, health, prices, spreads, recentOpps, recentSessions, stats, null);
+    return new DashboardSnapshot(now, health, prices, spreads, recentOpps, recentSessions, stats, statsCollector.getLatestStats());
   }
 
   private void addSpreadRow(List<SpreadRow> out, String symbol, Tick buy, Tick sell,

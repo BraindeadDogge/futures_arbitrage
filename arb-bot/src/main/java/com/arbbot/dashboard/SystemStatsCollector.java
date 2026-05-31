@@ -160,8 +160,8 @@ public class SystemStatsCollector {
             prevNetSent[i] = sent;
         }
         sessionRecvBytes += totalRecvDelta;
-        double downMbps = totalRecvDelta / 1_048_576.0;
-        double upMbps   = totalSentDelta / 1_048_576.0;
+        double downMbps = totalRecvDelta * 8.0 / 1_000_000.0;
+        double upMbps   = totalSentDelta * 8.0 / 1_000_000.0;
         double sessionMb = sessionRecvBytes / 1_048_576.0;
         if (downMbps > maxSeenDownMbps) maxSeenDownMbps = downMbps;
         return new double[]{downMbps, upMbps, sessionMb};
