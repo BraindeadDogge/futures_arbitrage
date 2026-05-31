@@ -10,7 +10,8 @@ public record DashboardSnapshot(
     List<SpreadRow> spreads,
     List<OpportunityDto> recentOpportunities,
     List<SessionDto> recentSessions,
-    StatsDto stats) {
+    StatsDto stats,
+    SystemStatsDto systemStats) {
 
   public record ExchangeHealthDto(
       String exchange,
@@ -87,4 +88,18 @@ public record DashboardSnapshot(
       double maxNetSpreadPct,
       Map<String, Long> countBySymbol,
       Map<String, Long> countByExchangePair) {}
+
+  public record SystemStatsDto(
+      double cpuSysPct,       // 0–100, or -1 if unavailable
+      double cpuBotPct,       // 0–100, or -1 if unavailable
+      double gpuPct,          // 0–100, or -1 if unavailable
+      double ramSysUsedGb,
+      double ramSysTotalGb,
+      double ramBotHeapMb,
+      double netDownMbps,
+      double netUpMbps,
+      double netSessionMb,
+      double netMaxSeenMbps,
+      String netStatus        // "OK", "HIGH", or "SAT"
+  ) {}
 }
