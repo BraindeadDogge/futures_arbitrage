@@ -195,7 +195,8 @@ public class SnapshotAssembler {
       log.debug("queryStats failed: {}", e.getMessage());
     }
 
-    return new DashboardSnapshot(now, health, prices, spreads, recentOpps, recentSessions, stats, statsCollector.getLatestStats());
+    return new DashboardSnapshot(now, health, prices, spreads, recentOpps, recentSessions, stats,
+        statsCollector.getLatestStats(), LogBuffer.getInstance().snapshot());
   }
 
   private void addSpreadRow(List<SpreadRow> out, String symbol, Tick buy, Tick sell,

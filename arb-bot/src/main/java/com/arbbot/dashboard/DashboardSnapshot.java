@@ -11,7 +11,8 @@ public record DashboardSnapshot(
     List<OpportunityDto> recentOpportunities,
     List<SessionDto> recentSessions,
     StatsDto stats,
-    SystemStatsDto systemStats) {
+    SystemStatsDto systemStats,
+    List<LogBuffer.LogEntry> logs) {
 
   public record ExchangeHealthDto(
       String exchange,

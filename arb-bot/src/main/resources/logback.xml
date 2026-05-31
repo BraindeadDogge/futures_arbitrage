@@ -15,9 +15,11 @@
         </rollingPolicy>
         <encoder class="net.logstash.logback.encoder.LogstashEncoder"/>
     </appender>
+    <appender name="DASHBOARD" class="com.arbbot.dashboard.DashboardLogAppender"/>
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>
         <appender-ref ref="FILE"/>
+        <appender-ref ref="DASHBOARD"/>
     </root>
     <logger name="com.arbbot" level="DEBUG"/>
     <logger name="okhttp3" level="WARN"/>

@@ -225,6 +225,45 @@
   .ob-mid-price  { font-size: 13px; font-weight: bold; }
   .ob-mid-spread { font-size: 10px; color: var(--yellow); }
 
+  /* ── Log window ─────────────────────────────────────────────────────── */
+  #log-section { border-bottom: 1px solid var(--border); }
+  #log-toolbar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 4px 12px;
+    background: var(--bg3);
+    border-bottom: 1px solid var(--border);
+  }
+  .log-filter-btn {
+    padding: 2px 8px; border-radius: 3px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--dim); font-size: 10px; cursor: pointer;
+  }
+  .log-filter-btn.active { background: var(--bg3); color: var(--text); border-color: var(--teal); }
+  #log-autoscroll { margin-left: auto; display: flex; align-items: center; gap: 5px; font-size: 10px; color: var(--dim); cursor: pointer; user-select: none; }
+  #log-inner {
+    height: 200px; overflow-y: auto;
+    background: var(--bg);
+    font-family: 'Roboto Mono', 'Courier New', monospace;
+    font-size: 11px;
+  }
+  .log-line {
+    display: flex; align-items: baseline; gap: 8px;
+    padding: 1px 12px;
+    border-bottom: 1px solid rgba(43,49,57,0.4);
+  }
+  .log-line:hover { background: var(--bg2); }
+  .log-ts  { color: var(--dim); flex-shrink: 0; font-size: 10px; }
+  .log-lvl { font-size: 10px; font-weight: bold; flex-shrink: 0; min-width: 36px; }
+  .log-src { color: var(--dim); flex-shrink: 0; font-size: 10px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .log-msg { flex: 1; word-break: break-word; }
+  .lvl-DEBUG { color: #555; }
+  .lvl-INFO  { color: var(--teal); }
+  .lvl-WARN  { color: var(--yellow); }
+  .lvl-ERROR { color: var(--red); }
+  .msg-DEBUG { color: var(--dim); }
+  .msg-INFO  { color: var(--text); }
+  .msg-WARN  { color: var(--yellow); }
+  .msg-ERROR { color: var(--red); }
+
   /* ── Stats bar ──────────────────────────────────────────────────────── */
   #stats-bar {
     display: flex; gap: 1px;
@@ -349,6 +388,21 @@
 <!-- Stats footer -->
 <div id="stats-bar"></div>
 
+<!-- Log window -->
+<div id="log-section">
+  <div class="sec-title">LOGS</div>
+  <div id="log-toolbar">
+    <button class="log-filter-btn active" data-lvl="ALL" onclick="setLogFilter(this)">ALL</button>
+    <button class="log-filter-btn" data-lvl="INFO" onclick="setLogFilter(this)">INFO</button>
+    <button class="log-filter-btn" data-lvl="WARN" onclick="setLogFilter(this)">WARN</button>
+    <button class="log-filter-btn" data-lvl="ERROR" onclick="setLogFilter(this)">ERROR</button>
+    <div id="log-autoscroll" onclick="toggleAutoscroll()">
+      <span id="log-as-icon">⏬</span><span id="log-as-txt">auto-scroll ON</span>
+    </div>
+  </div>
+  <div id="log-inner"></div>
+</div>
+
 <script>
 // ── Constants ─────────────────────────────────────────────────────────────
 const EXPIRED_DISPLAY_MS = 10_000;   // keep expired opp in active section for 10 s
@@ -439,6 +493,7 @@ function render(snap) {
   renderSymbolTabs(snap.prices);
   renderOrderBooks(snap.prices);
   renderStats(snap.stats);
+  renderLogs(snap.logs || []);
 }
 
 // ── System stats banner ───────────────────────────────────────────────────
@@ -941,6 +996,50 @@ function fmtAgo(ms) {
   if (ms < 60000)   return Math.floor(ms / 1000) + 's ago';
   if (ms < 3600000) return Math.floor(ms / 60000) + 'm ago';
   return Math.floor(ms / 3600000) + 'h ago';
+}
+
+// ── Log window ────────────────────────────────────────────────────────────
+let logFilter = 'ALL';
+let logAutoscroll = true;
+
+function setLogFilter(btn) {
+  logFilter = btn.dataset.lvl;
+  document.querySelectorAll('.log-filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+function toggleAutoscroll() {
+  logAutoscroll = !logAutoscroll;
+  document.getElementById('log-as-icon').textContent = logAutoscroll ? '⏬' : '⏸';
+  document.getElementById('log-as-txt').textContent   = logAutoscroll ? 'auto-scroll ON' : 'auto-scroll OFF';
+}
+
+const LOG_LEVEL_ORDER = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };
+
+function renderLogs(logs) {
+  const el = document.getElementById('log-inner');
+  const minLevel = LOG_LEVEL_ORDER[logFilter] ?? 0;
+  const visible = logFilter === 'ALL'
+    ? logs
+    : logs.filter(l => (LOG_LEVEL_ORDER[l.level] ?? 0) >= minLevel);
+
+  el.innerHTML = visible.map(l => {
+    const d = new Date(l.timestampMs);
+    const ts = d.toTimeString().slice(0, 8);
+    const msg = escHtml(l.message);
+    return `<div class="log-line">
+      <span class="log-ts">${ts}</span>
+      <span class="log-lvl lvl-${l.level}">${l.level}</span>
+      <span class="log-src" title="${escHtml(l.logger)}">${escHtml(l.logger)}</span>
+      <span class="log-msg msg-${l.level}">${msg}</span>
+    </div>`;
+  }).join('');
+
+  if (logAutoscroll) el.scrollTop = el.scrollHeight;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 </script>
 </body>
