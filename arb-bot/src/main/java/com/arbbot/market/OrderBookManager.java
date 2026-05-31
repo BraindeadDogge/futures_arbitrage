@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class OrderBookManager {
 
@@ -16,6 +17,9 @@ public class OrderBookManager {
     private final Map<String, OrderBook> books = new ConcurrentHashMap<>();
     // tracks which books are currently in a frozen state to log only on state transitions
     private final Map<String, Boolean> priceFreezeState = new ConcurrentHashMap<>();
+    // counts lifetime freezes per book; after FREEZE_WARN_LIMIT occurrences downgrade to DEBUG
+    private static final int FREEZE_WARN_LIMIT = 3;
+    private final Map<String, AtomicInteger> freezeCount = new ConcurrentHashMap<>();
 
     public OrderBookManager(long wsStaleThresholdMs) {
         this.wsStaleThresholdMs = wsStaleThresholdMs;
@@ -36,13 +40,21 @@ public class OrderBookManager {
         String bookKey = exchange + "/" + exchangeSymbol;
         if (book.isBestBidFrozen(PRICE_FREEZE_THRESHOLD_MS)) {
             if (!Boolean.TRUE.equals(priceFreezeState.put(bookKey, true))) {
-                log.warn("Price freeze: {}/{} best bid unchanged >{}s — excluding from scanner",
-                    exchange, exchangeSymbol, PRICE_FREEZE_THRESHOLD_MS / 1000);
+                int n = freezeCount.computeIfAbsent(bookKey, k -> new AtomicInteger()).incrementAndGet();
+                if (n <= FREEZE_WARN_LIMIT) {
+                    log.warn("Price freeze: {}/{} best bid unchanged >{}s — excluding from scanner (occurrence #{})",
+                        exchange, exchangeSymbol, PRICE_FREEZE_THRESHOLD_MS / 1000, n);
+                } else {
+                    log.debug("Price freeze: {}/{} best bid unchanged >{}s (occurrence #{}, suppressed to DEBUG)",
+                        exchange, exchangeSymbol, PRICE_FREEZE_THRESHOLD_MS / 1000, n);
+                }
             }
             return Optional.of(Tick.unreliable(canonical, exchange));
         }
         if (Boolean.TRUE.equals(priceFreezeState.put(bookKey, false))) {
-            log.info("Price freeze resolved: {}/{} best bid is moving again", exchange, exchangeSymbol);
+            int n = freezeCount.getOrDefault(bookKey, new AtomicInteger()).get();
+            log.info("Price freeze resolved: {}/{} best bid is moving again (froze {} time{} this session)",
+                exchange, exchangeSymbol, n, n == 1 ? "" : "s");
         }
         double bid = book.bestBid().orElse(0);
         double ask = book.bestAsk().orElse(0);

@@ -131,7 +131,12 @@ public abstract class BaseWsClient extends WebSocketListener implements Exchange
 
     @Override
     public final void onFailure(WebSocket ws, Throwable t, Response response) {
-        log.error("[{}] WebSocket failure: {}", exchangeName, t.getMessage());
+        String detail = t.getMessage() != null ? t.getMessage() : t.getClass().getSimpleName();
+        if (response != null) {
+            log.error("[{}] WebSocket failure: {} (HTTP {})", exchangeName, detail, response.code());
+        } else {
+            log.error("[{}] WebSocket failure: {}", exchangeName, detail, t);
+        }
         connected.set(false);
         scheduleReconnect();
     }

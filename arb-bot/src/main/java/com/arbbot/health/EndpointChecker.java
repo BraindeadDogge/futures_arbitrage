@@ -35,8 +35,11 @@ public class EndpointChecker {
       if (response.code() == 200 || response.isSuccessful()) {
         return ExchangeHealth.unknown(exchangeName).withRestAlive(true, latency, Instant.now());
       }
+      String body = "";
+      try { var b = response.body(); body = b != null ? b.string() : ""; } catch (Exception ignored) {}
+      if (body.length() > 200) body = body.substring(0, 200) + "…";
       String err = "HTTP " + response.code();
-      log.warn("[{}] Endpoint check failed: {}", exchangeName, err);
+      log.warn("[{}] Endpoint check failed: {} body={}", exchangeName, err, body.isBlank() ? "(empty)" : body);
       return ExchangeHealth.unknown(exchangeName)
           .withRestAlive(false, latency, Instant.now())
           .withError(err);
