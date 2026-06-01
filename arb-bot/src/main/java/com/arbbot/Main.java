@@ -188,7 +188,7 @@ public class Main {
             try {
                 var stats = store.queryStats();
                 log.info("Final stats: {} opportunities logged, max net spread: {}%",
-                    stats.totalOpportunities(), stats.maxNetSpreadPct() * 100);
+                    stats.totalOpportunities(), stats.maxNetSpreadPct());
             } catch (Exception e) { log.error("Stats query error on shutdown", e); }
             store.close();
             log.info("Shutdown complete.");

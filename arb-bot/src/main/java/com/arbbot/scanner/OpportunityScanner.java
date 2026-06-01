@@ -28,7 +28,9 @@ public class OpportunityScanner {
     private static final int SESSION_GAP_TICKS = 10;
     /** Only persist to DB if net% changed by more than this, or SAVE_DEBOUNCE_MS has elapsed. */
     private static final double SAVE_DEBOUNCE_PCT = 0.01;
-    private static final long SAVE_DEBOUNCE_MS = 2_000;
+    private static final long SAVE_DEBOUNCE_MS = 30_000;
+    /** Only save session_ticks for sessions that lasted at least this long (avoids high tick volume). */
+    private static final long SESSION_MIN_TICK_DURATION_MS = 60_000;
     /** Only record a session tick if net% changed by more than this, or TICK_DEBOUNCE_MS has elapsed. */
     private static final double TICK_DEBOUNCE_PCT = 0.01;
     private static final long TICK_DEBOUNCE_MS = 1_000;
@@ -136,7 +138,8 @@ public class OpportunityScanner {
                         t.netPct(), t.grossPct(), t.maxVolumeUsdt(),
                         t.longAsk(), t.shortBid()));
                 }
-                store.saveSessionTicks(oppTicks);
+                if (now - s.startedAt >= SESSION_MIN_TICK_DURATION_MS)
+                    store.saveSessionTicks(oppTicks);
                 return true;
             }
             return false;

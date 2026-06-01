@@ -69,13 +69,36 @@ public class OpportunityStore implements AutoCloseable {
         java.io.File parent = new java.io.File(dbPath).getParentFile();
         if (parent != null) parent.mkdirs();
         connection = DriverManager.getConnection("jdbc:sqlite:" + dbPath);
+        // WAL mode must be set before disabling autocommit
+        try (Statement s = connection.createStatement()) {
+            s.execute("PRAGMA journal_mode=WAL");
+            s.execute("PRAGMA synchronous=NORMAL");
+        }
         connection.setAutoCommit(false);
         initSchema();
         scheduler = Executors.newSingleThreadScheduledExecutor(
             Thread.ofVirtual().name("store-flusher").factory());
         scheduler.scheduleAtFixedRate(this::flushSilent, flushIntervalMs, flushIntervalMs,
             TimeUnit.MILLISECONDS);
+        // Prune old data every 6 hours to keep DB size bounded
+        scheduler.scheduleAtFixedRate(this::pruneOldData, 6, 6, TimeUnit.HOURS);
         log.info("OpportunityStore started: {}", dbPath);
+    }
+
+    /** Deletes raw tick rows older than 48h and session ticks older than 7 days. */
+    private synchronized void pruneOldData() {
+        try (Statement stmt = connection.createStatement()) {
+            int opps = stmt.executeUpdate(
+                "DELETE FROM opportunities WHERE detected_at < datetime('now', '-48 hours')");
+            int ticks = stmt.executeUpdate(
+                "DELETE FROM session_ticks WHERE recorded_at < datetime('now', '-7 days')");
+            connection.commit();
+            if (opps > 0 || ticks > 0)
+                log.info("Pruned {} opportunity rows and {} session tick rows", opps, ticks);
+        } catch (SQLException e) {
+            log.error("Data pruning failed: {}", e.getMessage());
+            try { connection.rollback(); } catch (SQLException ignored) {}
+        }
     }
 
     private void initSchema() throws SQLException {
@@ -183,8 +206,8 @@ public class OpportunityStore implements AutoCloseable {
                 ps.setString(6, o.shortExchange());
                 ps.setDouble(7, o.shortExchangeBidPrice());
                 ps.setDouble(8, o.shortExchangeBestAsk());
-                ps.setDouble(9, o.grossSpreadPct());
-                ps.setDouble(10, o.netSpreadPct());
+                ps.setDouble(9, o.grossSpreadPct() * 100.0);
+                ps.setDouble(10, o.netSpreadPct() * 100.0);
                 ps.setDouble(11, o.estimatedTotalCostPct());
                 ps.setDouble(12, o.longExchangeFunding() != null ? o.longExchangeFunding().currentRate() : 0);
                 ps.setDouble(13, o.shortExchangeFunding() != null ? o.shortExchangeFunding().currentRate() : 0);
