@@ -32,6 +32,8 @@ public class OpportunityScanner {
     /** Only record a session tick if net% changed by more than this, or TICK_DEBOUNCE_MS has elapsed. */
     private static final double TICK_DEBOUNCE_PCT = 0.01;
     private static final long TICK_DEBOUNCE_MS = 1_000;
+    /** Emit a LIVE log line at most once per this interval while a session is open. */
+    private static final long LIVE_LOG_INTERVAL_MS = 30_000;
 
     private record TickSnapshot(long recordedAt, double netPct, double grossPct,
                                 double maxVolumeUsdt, double longAsk, double shortBid) {}
@@ -52,6 +54,8 @@ public class OpportunityScanner {
         // Debounce: last tick recorded into ticks list
         double lastTickNetPct = Double.NaN;
         long lastTickMs = 0;
+        // Logging: last time we emitted a LIVE log line
+        long lastLogMs = 0;
 
         ActiveSession(String symbol, String longEx, String shortEx) {
             this.symbol = symbol; this.longEx = longEx; this.shortEx = shortEx;
@@ -107,6 +111,13 @@ public class OpportunityScanner {
             if (s.missingTicks >= SESSION_GAP_TICKS && s.tickCount > 0) {
                 double avgNet = s.tickCount > 0 ? s.sumNet / s.tickCount : 0;
                 double avgVol = s.tickCount > 0 ? s.sumVolume / s.tickCount : 0;
+                long durationS = (now - s.startedAt) / 1000;
+                log.info("[ARB CLOSE] sym={} long={} short={} peak={}% avg={}% min={}% dur={}s ticks={}",
+                    s.symbol, s.longEx, s.shortEx,
+                    String.format("%.4f", s.peakNet),
+                    String.format("%.4f", avgNet),
+                    String.format("%.4f", s.minNet == Double.MAX_VALUE ? 0 : s.minNet),
+                    durationS, s.tickCount);
                 store.saveSession(new OpportunitySession(
                     s.id, s.symbol, s.longEx, s.shortEx,
                     Instant.ofEpochMilli(s.startedAt),
@@ -173,6 +184,7 @@ public class OpportunityScanner {
 
         // Session tracking (always update stats; debounce only controls persistence)
         String sessionKey = symbol + "|" + buyTick.exchange() + "|" + sellTick.exchange();
+        boolean isNewSession = !activeSessions.containsKey(sessionKey);
         ActiveSession session = activeSessions.computeIfAbsent(sessionKey,
             k -> new ActiveSession(symbol, buyTick.exchange(), sellTick.exchange()));
         session.seenThisScan = true;
@@ -217,9 +229,20 @@ public class OpportunityScanner {
             session.lastSavedMs = nowMs;
         }
 
-        log.info("OPPORTUNITY: sym={} long={} short={} gross={}% net={}% maxVol=${}",
-            symbol, buyTick.exchange(), sellTick.exchange(),
-            String.format("%.4f", grossPct), String.format("%.4f", netPct),
-            String.format("%.0f", maxVol));
+        // Log only on session lifecycle events, not on every tick
+        if (isNewSession) {
+            log.info("[ARB OPEN ] sym={} long={} short={} net={}% gross={}% maxVol=${}",
+                symbol, buyTick.exchange(), sellTick.exchange(),
+                String.format("%.4f", netPct), String.format("%.4f", grossPct),
+                String.format("%.0f", maxVol));
+            session.lastLogMs = nowMs;
+        } else if (nowMs - session.lastLogMs >= LIVE_LOG_INTERVAL_MS) {
+            long ageS = (nowMs - session.startedAt) / 1000;
+            log.info("[ARB LIVE ] sym={} long={} short={} net={}% peak={}% age={}s",
+                symbol, buyTick.exchange(), sellTick.exchange(),
+                String.format("%.4f", netPct), String.format("%.4f", session.peakNet),
+                ageS);
+            session.lastLogMs = nowMs;
+        }
     }
 }

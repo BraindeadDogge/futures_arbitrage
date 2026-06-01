@@ -93,7 +93,6 @@ public record DashboardSnapshot(
   public record SystemStatsDto(
       double cpuSysPct,       // 0–100, or -1 if unavailable
       double cpuBotPct,       // 0–100, or -1 if unavailable
-      double gpuPct,          // 0–100, or -1 if unavailable
       double ramSysUsedGb,
       double ramSysTotalGb,
       double ramBotHeapMb,

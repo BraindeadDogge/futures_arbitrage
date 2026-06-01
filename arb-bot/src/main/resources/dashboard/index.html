@@ -539,12 +539,6 @@ function renderSystemStats(s) {
     ${ring(s.cpuSysPct, false)}
   </div>`;
 
-  // GPU
-  const gpuSection = `<div class="ss-ring-wrap">
-    <div class="ss-ring-col"><span class="ss-label">GPU</span></div>
-    ${ring(s.gpuPct, false)}
-  </div>`;
-
   // RAM
   const ramUsedPct = s.ramSysTotalGb > 0 ? (s.ramSysUsedGb / s.ramSysTotalGb) * 100 : 0;
   const ramCol = ringColor(ramUsedPct, true);
@@ -595,8 +589,6 @@ function renderSystemStats(s) {
 
   el.innerHTML = [
     cpuSection,
-    '<div class="ss-divider"></div>',
-    gpuSection,
     '<div class="ss-divider"></div>',
     ramSection,
     '<div class="ss-divider"></div>',

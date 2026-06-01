@@ -21,7 +21,7 @@ public class SystemStatsCollector {
     private static final Logger log = LoggerFactory.getLogger(SystemStatsCollector.class);
 
     private volatile SystemStatsDto latest = new SystemStatsDto(
-        -1, -1, -1, 0, 0, 0, 0, 0, 0, 0, "OK");
+        -1, -1, 0, 0, 0, 0, 0, 0, 0, "OK");
 
     private ScheduledExecutorService scheduler;
 
@@ -74,13 +74,12 @@ public class SystemStatsCollector {
             ensureInit();
             double cpuSys = pollCpuSys();
             double cpuBot = pollCpuBot();
-            double gpuPct = pollGpu();
             double[] ram = pollRam();
             double ramBotHeapMb = memBean.getHeapMemoryUsage().getUsed() / 1_048_576.0;
             double[] net = pollNet();
             String netStatus = computeNetStatus(net[0], maxSeenDownMbps);
             latest = new SystemStatsDto(
-                cpuSys, cpuBot, gpuPct,
+                cpuSys, cpuBot,
                 ram[0], ram[1],
                 ramBotHeapMb,
                 net[0], net[1], net[2], maxSeenDownMbps,
@@ -124,11 +123,6 @@ public class SystemStatsCollector {
         // normalized), causing "bot > total" when the machine has multiple CPUs.
         double load = osMXBean.getProcessCpuLoad() * 100.0;
         return Double.isFinite(load) && load >= 0 ? load : -1;
-    }
-
-    private double pollGpu() {
-        // OSHI 6.6.1 GraphicsCard does not expose GPU utilisation; return sentinel
-        return -1;
     }
 
     private double[] pollRam() {
