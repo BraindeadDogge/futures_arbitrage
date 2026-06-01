@@ -287,8 +287,9 @@ public class OpportunityStore implements AutoCloseable {
 
     public synchronized OpportunityStats queryStats() throws SQLException {
         try (Statement stmt = connection.createStatement()) {
+            // Use opportunity_sessions: one row per real window, values already in % units
             ResultSet rs = stmt.executeQuery(
-                "SELECT COUNT(*), AVG(net_spread_pct), MAX(net_spread_pct), MIN(detected_at), MAX(detected_at) FROM opportunities");
+                "SELECT COUNT(*), AVG(avg_net_pct), MAX(peak_net_pct), MIN(started_at), MAX(ended_at) FROM opportunity_sessions");
             long total = rs.getLong(1);
             double avg = rs.getDouble(2);
             double max = rs.getDouble(3);
@@ -297,12 +298,12 @@ public class OpportunityStore implements AutoCloseable {
 
             Map<String, Long> bySymbol = new LinkedHashMap<>();
             ResultSet rs2 = stmt.executeQuery(
-                "SELECT canonical_symbol, COUNT(*) FROM opportunities GROUP BY canonical_symbol ORDER BY COUNT(*) DESC");
+                "SELECT canonical_symbol, COUNT(*) FROM opportunity_sessions GROUP BY canonical_symbol ORDER BY COUNT(*) DESC");
             while (rs2.next()) bySymbol.put(rs2.getString(1), rs2.getLong(2));
 
             Map<String, Long> byPair = new LinkedHashMap<>();
             ResultSet rs3 = stmt.executeQuery(
-                "SELECT long_exchange || '->' || short_exchange, COUNT(*) FROM opportunities GROUP BY long_exchange, short_exchange ORDER BY COUNT(*) DESC");
+                "SELECT long_exchange || '->' || short_exchange, COUNT(*) FROM opportunity_sessions GROUP BY long_exchange, short_exchange ORDER BY COUNT(*) DESC");
             while (rs3.next()) byPair.put(rs3.getString(1), rs3.getLong(2));
 
             return new OpportunityStats(total, avg, max, bySymbol, byPair,

@@ -1,8 +1,7 @@
 package com.arbbot.storage;
 
 import static org.junit.jupiter.api.Assertions.*;
-import com.arbbot.fees.FundingRate;
-import com.arbbot.scanner.Opportunity;
+import com.arbbot.storage.OpportunityStore.OpportunitySession;
 import org.junit.jupiter.api.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -41,10 +40,12 @@ class OpportunityStoreConcurrencyTest {
                 try {
                     latch.await();
                     for (int i = 0; i < perThread; i++) {
-                        store.save(new Opportunity(UUID.randomUUID(), "BTC", "binance", 50000, 49900,
-                            "bybit", 50200, 50300, 0.004, 0.002, 0.002,
-                            FundingRate.zero("binance", "BTC"), FundingRate.zero("bybit", "BTC"),
-                            1000.0, 5000.0, 200_000.0, 150_000.0, Instant.now()));
+                        Instant now = Instant.now();
+                        store.saveSession(new OpportunitySession(
+                            UUID.randomUUID().toString(), "BTC", "binance", "bybit",
+                            now.minusSeconds(10), now,
+                            0.2, 0.2, 0.2, 0.2, 0.2,
+                            10_000.0, 8_000.0, 10_000L, 100));
                     }
                 } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
             }));
