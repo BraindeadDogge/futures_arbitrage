@@ -132,6 +132,7 @@ public abstract class BaseWsClient extends WebSocketListener implements Exchange
 
     @Override
     public final void onMessage(WebSocket ws, ByteString bytes) {
+        lastMessageAt.set(System.currentTimeMillis());
         handleBinaryMessage(ws, bytes);
     }
 
