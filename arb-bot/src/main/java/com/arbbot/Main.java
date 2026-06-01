@@ -230,7 +230,7 @@ public class Main {
             case "okx" -> "/data/0/ts";
             case "gate" -> "server_time";
             case "bitget" -> "/data/serverTime";
-            case "htx" -> "data";
+            case "htx" -> "ts";
             default -> "time";
         };
     }
