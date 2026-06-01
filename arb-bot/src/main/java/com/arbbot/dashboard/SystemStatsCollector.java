@@ -1,6 +1,7 @@
 package com.arbbot.dashboard;
 
 import com.arbbot.dashboard.DashboardSnapshot.SystemStatsDto;
+import com.sun.management.OperatingSystemMXBean;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.util.List;
@@ -12,8 +13,6 @@ import oshi.hardware.CentralProcessor;
 import oshi.hardware.GlobalMemory;
 import oshi.hardware.HardwareAbstractionLayer;
 import oshi.hardware.NetworkIF;
-import oshi.software.os.OSProcess;
-import oshi.software.os.OperatingSystem;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,10 +30,7 @@ public class SystemStatsCollector {
     private HardwareAbstractionLayer hal;
     private CentralProcessor processor;
     private GlobalMemory memory;
-    private OperatingSystem os;
-    private int pid;
     private long[] prevCpuTicks;
-    private OSProcess prevProc;
     private List<NetworkIF> netIfs;
     private long[] prevNetRecv;
     private long[] prevNetSent;
@@ -42,6 +38,9 @@ public class SystemStatsCollector {
     private double maxSeenDownMbps = 0;
 
     private final MemoryMXBean memBean = ManagementFactory.getMemoryMXBean();
+    // JMX OS bean: getProcessCpuLoad() returns fraction of *all* CPUs, matching profiler tools
+    private final OperatingSystemMXBean osMXBean =
+        (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
 
     public void start() {
         scheduler = Executors.newSingleThreadScheduledExecutor(
@@ -97,10 +96,7 @@ public class SystemStatsCollector {
         hal = si.getHardware();
         processor = hal.getProcessor();
         memory = hal.getMemory();
-        os = si.getOperatingSystem();
-        pid = (int) ProcessHandle.current().pid();
         prevCpuTicks = processor.getSystemCpuLoadTicks();
-        prevProc = os.getProcess(pid);
         netIfs = hal.getNetworkIFs().stream()
             .filter(n -> !n.getName().startsWith("lo"))
             .toList();
@@ -114,21 +110,20 @@ public class SystemStatsCollector {
     }
 
     private double pollCpuSys() {
-        long[] ticks = processor.getSystemCpuLoadTicks();
+        // Correct OSHI pattern: compute delta first (internally fetches current ticks),
+        // then save the freshly fetched ticks for the next interval.
         double load = processor.getSystemCpuLoadBetweenTicks(prevCpuTicks) * 100.0;
-        prevCpuTicks = ticks;
+        prevCpuTicks = processor.getSystemCpuLoadTicks();
         return Double.isFinite(load) ? Math.max(0, Math.min(100, load)) : -1;
     }
 
     private double pollCpuBot() {
-        try {
-            OSProcess proc = os.getProcess(pid);
-            double load = proc.getProcessCpuLoadBetweenTicks(prevProc) * 100.0;
-            prevProc = proc;
-            return Double.isFinite(load) ? Math.max(0, Math.min(100, load)) : -1;
-        } catch (Exception e) {
-            return -1;
-        }
+        // JMX getProcessCpuLoad() returns fraction of ALL logical CPUs (0.0–1.0),
+        // matching the scale shown by IntelliJ profiler and Activity Monitor.
+        // OSHI's getProcessCpuLoadBetweenTicks() returns per-core-equivalent (not
+        // normalized), causing "bot > total" when the machine has multiple CPUs.
+        double load = osMXBean.getProcessCpuLoad() * 100.0;
+        return Double.isFinite(load) && load >= 0 ? load : -1;
     }
 
     private double pollGpu() {
